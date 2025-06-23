@@ -1,0 +1,7 @@
+PyQt6
+ultralytics
+deep-sort-realtime
+Flask
+requests
+opencv-python
+numpy

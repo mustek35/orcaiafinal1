@@ -1,0 +1,11 @@
+[
+    {
+        "ip": "192.168.1.10",
+        "puerto": 80,
+        "usuario": "admin",
+        "contrasena": "@Remoto753524",
+        "tipo": "nvr",
+        "canal": "2",
+        "grilla": "grilla 1"
+    }
+]

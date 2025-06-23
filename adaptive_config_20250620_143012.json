@@ -1,0 +1,21 @@
+{
+    "adaptive_sampling_config": {
+        "base_interval": 6,
+        "min_interval": 2,
+        "max_interval": 20,
+        "adaptation_rate": 0.25,
+        "detection_weight": 0.7,
+        "movement_weight": 0.3,
+        "high_activity_threshold": 0.12,
+        "low_activity_threshold": 0.03,
+        "history_window": 30,
+        "stabilization_time": 30,
+        "min_detections_for_adaptation": 2,
+        "confidence_threshold": 0.3,
+        "enable_burst_mode": true,
+        "burst_duration": 15,
+        "enable_smoothing": true
+    },
+    "timestamp": "2025-06-20T14:30:14.850043",
+    "version": "1.0"
+}
