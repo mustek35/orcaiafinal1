@@ -611,8 +611,27 @@ class GrillaWidget(QWidget):
         
         if self.visualizador and self.visualizador.video_sink:
             self.visualizador.video_sink.videoFrameChanged.connect(self.actualizar_pixmap_y_frame)
-            
+
         self.registrar_log(f"🎥 Vista configurada para {current_cam_ip}")
+
+        # =================================================================
+        # NUEVA INTEGRACIÓN PTZ: Registrar cámara con sistema PTZ
+        # =================================================================
+        try:
+            # Intentar registrar esta cámara con el sistema PTZ
+            self.register_with_ptz_system()
+        except Exception as e:
+            self.registrar_log(f"⚠️ No se pudo registrar con sistema PTZ: {e}")
+
+        # Información adicional para debugging
+        if DEBUG_LOGS:
+            self.registrar_log("🔧 DEBUG - Configuración cámara:")
+            self.registrar_log(f"   📷 IP: {current_cam_ip}")
+            self.registrar_log(f"   🎯 Tipo: {cam_data.get('tipo', 'fija')}")
+            self.registrar_log(
+                f"   🧠 Muestreo adaptativo: {'ACTIVO' if self.adaptive_sampling_enabled else 'FIJO'}"
+            )
+            self.registrar_log(f"   🎮 PTZ disponible: {len(self.ptz_cameras)} cámaras")
 
     def actualizar_boxes(self, boxes):
         """Método principal que recibe las detecciones del visualizador - MEJORADO CON MUESTREO ADAPTATIVO"""
@@ -750,8 +769,35 @@ class GrillaWidget(QWidget):
         # NUEVA FUNCIONALIDAD: Actualizar métricas del sistema adaptativo
         processing_time = time.time() - start_time
         self.update_adaptive_metrics(boxes, processing_time)
-        
-        self.request_paint_update() 
+
+        # =================================================================
+        # NUEVA INTEGRACIÓN PTZ: Enviar detecciones al sistema PTZ si está activo
+        # =================================================================
+        try:
+            # Verificar si hay un sistema PTZ disponible en la ventana principal
+            main_window = self._get_main_window()
+            if main_window and hasattr(main_window, 'send_detections_to_ptz'):
+                camera_id = self.cam_data.get('ip', 'unknown') if self.cam_data else 'unknown'
+
+                # Convertir detecciones al formato esperado por el PTZ
+                ptz_detections = self._convert_boxes_for_ptz(boxes)
+
+                if ptz_detections:
+                    # Intentar enviar al sistema PTZ
+                    success = main_window.send_detections_to_ptz(camera_id, ptz_detections)
+
+                    # Log de debug solo para primera detección exitosa o errores
+                    if success and self.detection_count <= 5:
+                        self.registrar_log(f"🎯 Detecciones enviadas al sistema PTZ para {camera_id}")
+                    elif not success and DEBUG_LOGS:
+                        self.registrar_log(f"⚠️ No se pudieron enviar detecciones al PTZ para {camera_id}")
+
+        except Exception as e:
+            # Solo log de errores críticos para evitar spam
+            if DEBUG_LOGS:
+                self.registrar_log(f"❌ Error integrando con PTZ: {e}")
+
+        self.request_paint_update()
 
     def actualizar_pixmap_y_frame(self, frame):
         if not frame.isValid():
@@ -1876,4 +1922,88 @@ class GrillaWidget(QWidget):
                 
         except Exception as e:
             self.registrar_log(f"❌ Error cargando configuración adaptativa desde {filename}: {e}")
+            return False
+
+    def _get_main_window(self):
+        """Obtener referencia a la ventana principal"""
+        try:
+            widget = self.parent()
+            while widget is not None:
+                if hasattr(widget, 'send_detections_to_ptz'):
+                    return widget
+                widget = widget.parent()
+            return None
+        except Exception:
+            return None
+
+    def _convert_boxes_for_ptz(self, boxes):
+        """Convertir detecciones al formato esperado por el sistema PTZ"""
+        try:
+            if not boxes or not self.original_frame_size:
+                return []
+
+            ptz_detections = []
+            frame_w = self.original_frame_size.width()
+            frame_h = self.original_frame_size.height()
+
+            for box_data in boxes:
+                if not isinstance(box_data, dict):
+                    continue
+
+                bbox = box_data.get('bbox', (0, 0, 0, 0))
+                if len(bbox) != 4:
+                    continue
+
+                x1, y1, x2, y2 = bbox
+                tracker_id = box_data.get('id')
+                cls = box_data.get('cls', 0)
+                conf = box_data.get('conf', 0)
+
+                cx = float((x1 + x2) / 2)
+                cy = float((y1 + y2) / 2)
+                width = float(x2 - x1)
+                height = float(y2 - y1)
+
+                ptz_detection = {
+                    'cx': cx,
+                    'cy': cy,
+                    'width': width,
+                    'height': height,
+                    'confidence': float(conf) if isinstance(conf, (int, float)) else 0.0,
+                    'class': int(cls),
+                    'bbox': [float(x1), float(y1), float(x2), float(y2)],
+                    'frame_w': frame_w,
+                    'frame_h': frame_h,
+                    'track_id': tracker_id,
+                    'timestamp': time.time()
+                }
+
+                if 'moving' in box_data:
+                    ptz_detection['moving'] = box_data['moving']
+
+                if 'centers' in box_data:
+                    ptz_detection['centers'] = box_data['centers']
+
+                ptz_detections.append(ptz_detection)
+
+            return ptz_detections
+
+        except Exception as e:
+            if DEBUG_LOGS:
+                self.registrar_log(f"❌ Error convirtiendo detecciones para PTZ: {e}")
+            return []
+
+    def register_with_ptz_system(self):
+        """Registrar esta cámara con el sistema PTZ si está disponible"""
+        try:
+            main_window = self._get_main_window()
+            if main_window and hasattr(main_window, 'register_camera_with_ptz') and self.cam_data:
+                success = main_window.register_camera_with_ptz(self.cam_data)
+                if success:
+                    camera_id = self.cam_data.get('ip', 'unknown')
+                    self.registrar_log(f"📷 Cámara registrada con sistema PTZ: {camera_id}")
+                    return True
+            return False
+        except Exception as e:
+            self.registrar_log(f"❌ Error registrando con sistema PTZ: {e}")
             return False
