@@ -853,20 +853,34 @@ class EnhancedMultiObjectPTZDialog(QDialog):
             if MULTI_OBJECT_AVAILABLE:
                 # Extraer datos de la cámara correctamente
                 ip = camera_data.get('ip')
-                port = camera_data.get('puerto', 80)  # Puerto por defecto 80 si no se especifica
+                port = camera_data.get('puerto', 80)
                 username = camera_data.get('usuario')
                 password = camera_data.get('contrasena')
 
                 self._log(f"📡 Conectando a cámara: {ip}:{port} (usuario: {username})")
 
-                # Crear tracker con los parámetros correctos (argumentos posicionales)
-                self.current_tracker = create_multi_object_tracker(
-                    ip,
-                    port,
-                    username,
-                    password,
-                    self.multi_config,
-                )
+                # Crear tracker directamente utilizando la clase MultiObjectPTZTracker
+                try:
+                    self.current_tracker = MultiObjectPTZTracker(
+                        ip=ip,
+                        port=port,
+                        username=username,
+                        password=password,
+                        basic_config=None,
+                        multi_config=self.multi_config,
+                    )
+                    self._log(f"✅ Tracker creado directamente: {ip}:{port}")
+                except Exception as tracker_error:
+                    self._log("⚠️ Error con tracker directo, intentando función factory...")
+                    # Fallback: usar función factory con nombre de configuración
+                    config_name = "maritime_standard"
+                    self.current_tracker = create_multi_object_tracker(
+                        ip,
+                        port,
+                        username,
+                        password,
+                        config_name,
+                    )
 
                 if self.current_tracker:
                     success = self.current_tracker.start_tracking()
