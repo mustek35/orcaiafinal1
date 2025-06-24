@@ -844,7 +844,11 @@ class EnhancedMultiObjectPTZDialog(QDialog):
             missing_fields = [field for field in required_fields if not camera_data.get(field)]
 
             if missing_fields:
-                QMessageBox.warning(self, "Error", f"Faltan datos de la cámara: {', '.join(missing_fields)}")
+                QMessageBox.warning(
+                    self,
+                    "Error",
+                    f"Faltan datos de la cámara: {', '.join(missing_fields)}",
+                )
                 return
 
             self._log("🚀 Iniciando sistema de seguimiento PTZ...")
@@ -853,13 +857,16 @@ class EnhancedMultiObjectPTZDialog(QDialog):
             if MULTI_OBJECT_AVAILABLE:
                 # Extraer datos de la cámara correctamente
                 ip = camera_data.get('ip')
-                port = camera_data.get('puerto', 80)
+                port = camera_data.get('puerto', 80)  # Puerto por defecto 80
                 username = camera_data.get('usuario')
                 password = camera_data.get('contrasena')
 
-                self._log(f"📡 Conectando a cámara: {ip}:{port} (usuario: {username})")
+                self._log(
+                    f"📡 Conectando a cámara: {ip}:{port} (usuario: {username})"
+                )
 
-                # Crear tracker directamente utilizando la clase MultiObjectPTZTracker
+                # Crear tracker directamente usando la clase MultiObjectPTZTracker
+                # Esto evita problemas con la función factory create_multi_object_tracker
                 try:
                     self.current_tracker = MultiObjectPTZTracker(
                         ip=ip,
@@ -870,22 +877,51 @@ class EnhancedMultiObjectPTZDialog(QDialog):
                         multi_config=self.multi_config,
                     )
                     self._log(f"✅ Tracker creado directamente: {ip}:{port}")
+
+                    # Verificar que el tracker tiene los métodos necesarios
+                    required_methods = [
+                        'start_tracking',
+                        'stop_tracking',
+                        'update_multi_object_tracking',
+                        'get_status',
+                    ]
+                    missing_methods = [
+                        method
+                        for method in required_methods
+                        if not hasattr(self.current_tracker, method)
+                    ]
+
+                    if missing_methods:
+                        self._log(
+                            f"⚠️ Tracker creado pero faltan métodos: {missing_methods}"
+                        )
+                    else:
+                        self._log(
+                            "✅ Tracker verificado con todos los métodos necesarios"
+                        )
+
                 except Exception as tracker_error:
-                    self._log("⚠️ Error con tracker directo, intentando función factory...")
+                    self._log(f"⚠️ Error con tracker directo: {tracker_error}")
                     # Fallback: usar función factory con nombre de configuración
                     config_name = "maritime_standard"
-                    self.current_tracker = create_multi_object_tracker(
-                        ip,
-                        port,
-                        username,
-                        password,
-                        config_name,
-                    )
+                    try:
+                        self.current_tracker = create_multi_object_tracker(
+                            ip, port, username, password, config_name
+                        )
+                        self._log(
+                            f"✅ Tracker creado con función factory usando config: {config_name}"
+                        )
+                    except Exception as factory_error:
+                        raise Exception(
+                            f"No se pudo crear tracker. Directo: {tracker_error}, Factory: {factory_error}"
+                        )
 
                 if self.current_tracker:
                     success = self.current_tracker.start_tracking()
                     if not success:
-                        raise Exception("Error iniciando tracker - verificar conexión con cámara")
+                        raise Exception(
+                            "Error iniciando tracker - verificar conexión con cámara"
+                        )
                 else:
                     raise Exception("No se pudo crear el tracker PTZ")
             else:
@@ -914,8 +950,12 @@ class EnhancedMultiObjectPTZDialog(QDialog):
             # === INICIAR HILO DE ESTADO CORREGIDO ===
             if self.current_tracker:
                 self.status_thread = StatusUpdateThread(self.current_tracker)
-                self.status_thread.status_updated.connect(self._update_status_display)
-                self.status_thread.error_occurred.connect(self._handle_status_error)  # ← LÍNEA CORREGIDA
+                self.status_thread.status_updated.connect(
+                    self._update_status_display
+                )
+                self.status_thread.error_occurred.connect(
+                    self._handle_status_error
+                )  # ← LÍNEA CORREGIDA
                 self.status_thread.start()
                 self._log("✅ Hilo de estado iniciado (versión corregida)")
             else:
@@ -1110,30 +1150,97 @@ Por favor, verifique la instalación de los módulos PTZ.
         QMessageBox.critical(self, "Error del Sistema", error_msg.strip())
         self.close()
 
-    def update_detections(self, detections, frame_size):
-        """Método público para recibir detecciones del sistema principal"""
+    def update_detections(self, detections, frame_size=(1920, 1080)):
+        """Método público para recibir detecciones del sistema principal - CORREGIDO"""
         if not self.tracking_active or not self.current_tracker:
             return
-        
+
         try:
             # Actualizar contador
             self.detection_count += len(detections)
-            
+
             if hasattr(self, 'detection_count_label'):
-                self.detection_count_label.setText(f"🎯 {self.detection_count} detecciones")
-            
-            # Enviar detecciones al tracker
+                self.detection_count_label.setText(
+                    f"🎯 {self.detection_count} detecciones"
+                )
+
+            # === VERIFICACIÓN Y LLAMADA CORREGIDA ===
+
+            # Verificar si el tracker tiene el método esperado
             if hasattr(self.current_tracker, 'update_multi_object_tracking'):
-                success = self.current_tracker.update_multi_object_tracking(detections, frame_size)
+                # Llamar al método correcto del tracker multi-objeto
+                success = self.current_tracker.update_multi_object_tracking(
+                    detections
+                )
                 if success:
-                    self._log(f"✅ Actualización de seguimiento exitosa ({len(detections)} objetos)")
+                    self._log(
+                        f"✅ Seguimiento multi-objeto actualizado ({len(detections)} objetos)"
+                    )
                 else:
-                    self._log(f"⚠️ Fallo en actualización de seguimiento")
+                    self._log(
+                        f"⚠️ Falló actualización de seguimiento multi-objeto"
+                    )
+
+            elif hasattr(self.current_tracker, 'update_tracking'):
+                # Fallback para tracker básico
+                success = self.current_tracker.update_tracking(
+                    detections, frame_size
+                )
+                if success:
+                    self._log(
+                        f"✅ Seguimiento básico actualizado ({len(detections)} objetos)"
+                    )
+                else:
+                    self._log(
+                        f"⚠️ Falló actualización de seguimiento básico"
+                    )
+
+            elif hasattr(self.current_tracker, 'process_detections'):
+                # Otra posible interfaz
+                success = self.current_tracker.process_detections(
+                    detections, frame_size
+                )
+                if success:
+                    self._log(
+                        f"✅ Detecciones procesadas ({len(detections)} objetos)"
+                    )
+                else:
+                    self._log(
+                        f"⚠️ Falló procesamiento de detecciones"
+                    )
             else:
-                self._log("⚠️ Tracker no tiene método update_multi_object_tracking")
-                
+                # Si no tiene ningún método conocido, mostrar métodos disponibles para debug
+                available_methods = [
+                    method
+                    for method in dir(self.current_tracker)
+                    if not method.startswith('_')
+                    and callable(getattr(self.current_tracker, method))
+                ]
+                self._log("⚠️ Tracker no tiene método de actualización conocido")
+                self._log(
+                    f"🔍 Métodos disponibles: {', '.join(available_methods[:10])}"
+                )
+
+                # Intentar llamar directamente al método que sabemos que existe
+                try:
+                    success = self.current_tracker.update_multi_object_tracking(
+                        detections
+                    )
+                    if success:
+                        self._log(
+                            f"✅ Llamada directa exitosa ({len(detections)} objetos)"
+                        )
+                    else:
+                        self._log("⚠️ Llamada directa falló")
+                except Exception as direct_error:
+                    self._log(f"❌ Error en llamada directa: {direct_error}")
+
         except Exception as e:
             self._log(f"❌ Error procesando detecciones: {e}")
+            # Mostrar más información de debug
+            self._log(f"🔍 Tipo de tracker: {type(self.current_tracker)}")
+            self._log(f"🔍 Estado tracking_active: {self.tracking_active}")
+            self._log(f"🔍 Número de detecciones: {len(detections)}")
 
 # Función de creación del sistema completo
 def create_multi_object_ptz_system(camera_list, parent=None):
