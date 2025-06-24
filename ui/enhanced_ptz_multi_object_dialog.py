@@ -859,13 +859,13 @@ class EnhancedMultiObjectPTZDialog(QDialog):
 
                 self._log(f"📡 Conectando a cámara: {ip}:{port} (usuario: {username})")
 
-                # Crear tracker con los parámetros correctos
+                # Crear tracker con los parámetros correctos (argumentos posicionales)
                 self.current_tracker = create_multi_object_tracker(
-                    ip=ip,
-                    port=port,
-                    username=username,
-                    password=password,
-                    multi_config=self.multi_config
+                    ip,
+                    port,
+                    username,
+                    password,
+                    self.multi_config,
                 )
 
                 if self.current_tracker:
