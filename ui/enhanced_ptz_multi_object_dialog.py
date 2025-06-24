@@ -833,60 +833,31 @@ class EnhancedMultiObjectPTZDialog(QDialog):
             if self.camera_selector.currentIndex() == 0:
                 QMessageBox.warning(self, "Error", "Seleccione una cámara PTZ")
                 return
-
+            
             camera_data = self.camera_selector.currentData()
             if not camera_data:
                 QMessageBox.warning(self, "Error", "Datos de cámara no válidos")
                 return
-
-            # Validar que los datos de la cámara tienen los campos requeridos
-            required_fields = ['ip', 'usuario', 'contrasena']
-            missing_fields = [field for field in required_fields if not camera_data.get(field)]
-
-            if missing_fields:
-                QMessageBox.warning(self, "Error", f"Faltan datos de la cámara: {', '.join(missing_fields)}")
-                return
-
+            
             self._log("🚀 Iniciando sistema de seguimiento PTZ...")
-
+            
             # Crear y configurar tracker si está disponible
             if MULTI_OBJECT_AVAILABLE:
-                # Extraer datos de la cámara correctamente
-                ip = camera_data.get('ip')
-                port = camera_data.get('puerto', 80)  # Puerto por defecto 80 si no se especifica
-                username = camera_data.get('usuario')
-                password = camera_data.get('contrasena')
-
-                self._log(f"📡 Conectando a cámara: {ip}:{port} (usuario: {username})")
-
-                # Crear tracker con los parámetros correctos
-                self.current_tracker = create_multi_object_tracker(
-                    ip=ip,
-                    port=port,
-                    username=username,
-                    password=password,
-                    multi_config=self.multi_config
-                )
-
+                self.current_tracker = create_multi_object_tracker(camera_data, self.multi_config)
                 if self.current_tracker:
                     success = self.current_tracker.start_tracking()
                     if not success:
-                        raise Exception("Error iniciando tracker - verificar conexión con cámara")
-                else:
-                    raise Exception("No se pudo crear el tracker PTZ")
-            else:
-                raise Exception("Sistema multi-objeto no disponible")
-
+                        raise Exception("Error iniciando tracker")
+            
             # Configurar UI para estado activo
             self.tracking_active = True
             self.session_start_time = time.time()
             self.detection_count = 0
-
+            
             self.start_btn.setEnabled(False)
             self.stop_btn.setEnabled(True)
             self.system_status_label.setText("🟢 Sistema Activo")
-            self.system_status_label.setStyleSheet(
-                """
+            self.system_status_label.setStyleSheet("""
                 QLabel {
                     font-size: 12px;
                     padding: 5px 10px;
@@ -894,9 +865,8 @@ class EnhancedMultiObjectPTZDialog(QDialog):
                     background-color: #1b2d1b;
                     color: #28a745;
                 }
-                """
-            )
-
+            """)
+            
             # === INICIAR HILO DE ESTADO CORREGIDO ===
             if self.current_tracker:
                 self.status_thread = StatusUpdateThread(self.current_tracker)
@@ -906,10 +876,10 @@ class EnhancedMultiObjectPTZDialog(QDialog):
                 self._log("✅ Hilo de estado iniciado (versión corregida)")
             else:
                 self._log("⚠️ No hay tracker disponible para hilo de estado")
-
+            
             self._log("✅ Seguimiento PTZ multi-objeto iniciado exitosamente")
             self.tracking_started.emit()
-
+            
         except Exception as e:
             self._log(f"❌ Error iniciando seguimiento: {e}")
             self._reset_ui_to_inactive()
