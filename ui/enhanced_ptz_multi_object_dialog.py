@@ -644,38 +644,40 @@ class EnhancedMultiObjectPTZDialog(QDialog):
             self.connection_status.setText("❌ Error de conexión")
     
     def _start_tracking(self):
-        """Iniciar seguimiento"""
+        """Iniciar seguimiento con tracker corregido"""
         try:
-            if not self.current_tracker:
-                self._log("❌ No hay tracker disponible")
-                return
-            
-            self._log("▶️ Iniciando seguimiento multi-objeto...")
-            
-            if hasattr(self.current_tracker, 'start_tracking'):
-                success = self.current_tracker.start_tracking()
-                if success:
+            from core.ptz_tracking_fix import create_fixed_tracker
+
+            # Crear y utilizar tracker corregido basado en la cámara actual
+            if not self.current_camera_data:
+                self._log("❌ No hay datos de cámara disponibles")
+                return False
+
+            self.current_tracker = create_fixed_tracker(self.current_camera_data)
+
+            if self.current_tracker.initialize():
+                if self.current_tracker.start_tracking():
                     self.tracking_active = True
                     self.tracking_status.setText("▶️ Activo")
                     self.start_tracking_button.setEnabled(False)
                     self.stop_tracking_button.setEnabled(True)
-                    
-                    # Iniciar hilo de monitoreo
+
+                    # Iniciar hilo de monitoreo si es posible
                     if hasattr(self.current_tracker, 'get_status'):
                         self.status_thread = StatusUpdateThread(self.current_tracker)
                         self.status_thread.status_updated.connect(self._on_status_updated)
                         self.status_thread.error_occurred.connect(self._on_tracking_error)
                         self.status_thread.start()
-                    
-                    self._log("✅ Seguimiento iniciado exitosamente")
-                    self.tracking_started.emit()
-                else:
-                    self._log("❌ Error iniciando seguimiento")
-            else:
-                self._log("⚠️ Funcionalidad de seguimiento no disponible")
-                
+
+                    self._log("✅ Seguimiento multi-objeto iniciado (tracker corregido)")
+                    return True
+
+            self._log("❌ Error iniciando tracker corregido")
+            return False
+
         except Exception as e:
-            self._log(f"❌ Error iniciando seguimiento: {e}")
+            self._log(f"❌ Error: {e}")
+            return False
     
     def _stop_tracking(self):
         """Detener seguimiento"""
