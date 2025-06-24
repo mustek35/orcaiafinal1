@@ -840,7 +840,7 @@ class EnhancedMultiObjectPTZDialog(QDialog):
                 return
 
             # Validar que los datos de la cámara tienen los campos requeridos
-            required_fields = ['ip', 'usuario', 'contrasena']
+            required_fields = ["ip", "usuario", "contrasena"]
             missing_fields = [field for field in required_fields if not camera_data.get(field)]
 
             if missing_fields:
@@ -852,21 +852,85 @@ class EnhancedMultiObjectPTZDialog(QDialog):
             # Crear y configurar tracker si está disponible
             if MULTI_OBJECT_AVAILABLE:
                 # Extraer datos de la cámara correctamente
-                ip = camera_data.get('ip')
-                port = camera_data.get('puerto', 80)
-                username = camera_data.get('usuario')
-                password = camera_data.get('contrasena')
+                ip = camera_data.get("ip")
+                port = camera_data.get("puerto", 80)  # Puerto por defecto 80 si no se especifica
+                username = camera_data.get("usuario")
+                password = camera_data.get("contrasena")
 
                 self._log(f"📡 Conectando a cámara: {ip}:{port} (usuario: {username})")
 
-                # Crear tracker con los parámetros correctos
-                self.current_tracker = create_multi_object_tracker(
-                    ip=ip,
-                    port=port,
-                    username=username,
-                    password=password,
-                    multi_config=self.multi_config,
-                )
+                # Crear tracker directamente usando la clase MultiObjectPTZTracker
+                # Esto evita problemas con la función factory create_multi_object_tracker
+                tracker_created = False
+
+                try:
+                    self.current_tracker = MultiObjectPTZTracker(
+                        ip=ip,
+                        port=port,
+                        username=username,
+                        password=password,
+                        basic_config=None,
+                        multi_config=self.multi_config,
+                    )
+                    self._log(f"✅ Tracker creado directamente: {ip}:{port}")
+
+                    # Verificar que el tracker tiene los métodos necesarios
+                    required_methods = [
+                        "start_tracking",
+                        "stop_tracking",
+                        "update_detections",
+                        "get_status",
+                    ]
+                    missing_methods = [
+                        method for method in required_methods if not hasattr(self.current_tracker, method)
+                    ]
+
+                    if missing_methods:
+                        self._log(f"⚠️ Tracker creado pero faltan métodos: {missing_methods}")
+                        # Si faltan métodos críticos, marcar como no creado
+                        if "start_tracking" in missing_methods or "update_detections" in missing_methods:
+                            tracker_created = False
+                            self.current_tracker = None
+                        else:
+                            tracker_created = True
+                    else:
+                        self._log("✅ Tracker verificado con todos los métodos necesarios")
+                        tracker_created = True
+
+                except Exception as tracker_error:
+                    self._log(f"⚠️ Error con tracker directo: {tracker_error}")
+                    tracker_created = False
+                    self.current_tracker = None
+
+                # Si no se pudo crear directamente, intentar alternativas
+                if not tracker_created:
+                    try:
+                        # Intentar crear usando solo los parámetros básicos
+                        self.current_tracker = MultiObjectPTZTracker(ip, port, username, password)
+                        self._log(f"✅ Tracker creado con parámetros básicos: {ip}:{port}")
+                        tracker_created = True
+
+                    except Exception as basic_error:
+                        self._log(f"⚠️ Error con tracker básico: {basic_error}")
+
+                        # Último intento: función factory SIN multi_config
+                        try:
+                            config_name = "maritime_standard"
+                            self.current_tracker = create_multi_object_tracker(
+                                ip, port, username, password, config_name
+                            )
+                            self._log(
+                                f"✅ Tracker creado con función factory usando config: {config_name}"
+                            )
+                            tracker_created = True
+
+                        except Exception as factory_error:
+                            self._log(f"❌ Error con función factory: {factory_error}")
+                            tracker_created = False
+
+                # Verificar que finalmente tenemos un tracker válido
+                if not tracker_created or not self.current_tracker:
+                    raise Exception("No se pudo crear ningún tipo de tracker PTZ válido")
 
                 if self.current_tracker:
                     success = self.current_tracker.start_tracking()
