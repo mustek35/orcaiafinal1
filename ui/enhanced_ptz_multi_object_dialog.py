@@ -844,11 +844,7 @@ class EnhancedMultiObjectPTZDialog(QDialog):
             missing_fields = [field for field in required_fields if not camera_data.get(field)]
 
             if missing_fields:
-                QMessageBox.warning(
-                    self,
-                    "Error",
-                    f"Faltan datos de la cámara: {', '.join(missing_fields)}",
-                )
+                QMessageBox.warning(self, "Error", f"Faltan datos de la cámara: {', '.join(missing_fields)}")
                 return
 
             self._log("🚀 Iniciando sistema de seguimiento PTZ...")
@@ -857,71 +853,25 @@ class EnhancedMultiObjectPTZDialog(QDialog):
             if MULTI_OBJECT_AVAILABLE:
                 # Extraer datos de la cámara correctamente
                 ip = camera_data.get('ip')
-                port = camera_data.get('puerto', 80)  # Puerto por defecto 80
+                port = camera_data.get('puerto', 80)
                 username = camera_data.get('usuario')
                 password = camera_data.get('contrasena')
 
-                self._log(
-                    f"📡 Conectando a cámara: {ip}:{port} (usuario: {username})"
+                self._log(f"📡 Conectando a cámara: {ip}:{port} (usuario: {username})")
+
+                # Crear tracker con los parámetros correctos
+                self.current_tracker = create_multi_object_tracker(
+                    ip=ip,
+                    port=port,
+                    username=username,
+                    password=password,
+                    multi_config=self.multi_config,
                 )
-
-                # Crear tracker directamente usando la clase MultiObjectPTZTracker
-                # Esto evita problemas con la función factory create_multi_object_tracker
-                try:
-                    self.current_tracker = MultiObjectPTZTracker(
-                        ip=ip,
-                        port=port,
-                        username=username,
-                        password=password,
-                        basic_config=None,
-                        multi_config=self.multi_config,
-                    )
-                    self._log(f"✅ Tracker creado directamente: {ip}:{port}")
-
-                    # Verificar que el tracker tiene los métodos necesarios
-                    required_methods = [
-                        'start_tracking',
-                        'stop_tracking',
-                        'update_multi_object_tracking',
-                        'get_status',
-                    ]
-                    missing_methods = [
-                        method
-                        for method in required_methods
-                        if not hasattr(self.current_tracker, method)
-                    ]
-
-                    if missing_methods:
-                        self._log(
-                            f"⚠️ Tracker creado pero faltan métodos: {missing_methods}"
-                        )
-                    else:
-                        self._log(
-                            "✅ Tracker verificado con todos los métodos necesarios"
-                        )
-
-                except Exception as tracker_error:
-                    self._log(f"⚠️ Error con tracker directo: {tracker_error}")
-                    # Fallback: usar función factory con nombre de configuración
-                    config_name = "maritime_standard"
-                    try:
-                        self.current_tracker = create_multi_object_tracker(
-                            ip, port, username, password, config_name
-                        )
-                        self._log(
-                            f"✅ Tracker creado con función factory usando config: {config_name}"
-                        )
-                    except Exception as factory_error:
-                        raise Exception(
-                            f"No se pudo crear tracker. Directo: {tracker_error}, Factory: {factory_error}"
-                        )
 
                 if self.current_tracker:
                     success = self.current_tracker.start_tracking()
                     if not success:
-                        raise Exception(
-                            "Error iniciando tracker - verificar conexión con cámara"
-                        )
+                        raise Exception("Error iniciando tracker - verificar conexión con cámara")
                 else:
                     raise Exception("No se pudo crear el tracker PTZ")
             else:
@@ -937,25 +887,21 @@ class EnhancedMultiObjectPTZDialog(QDialog):
             self.system_status_label.setText("🟢 Sistema Activo")
             self.system_status_label.setStyleSheet(
                 """
-                QLabel {
-                    font-size: 12px;
-                    padding: 5px 10px;
-                    border-radius: 15px;
-                    background-color: #1b2d1b;
-                    color: #28a745;
-                }
-                """
+            QLabel {
+                font-size: 12px;
+                padding: 5px 10px;
+                border-radius: 15px;
+                background-color: #1b2d1b;
+                color: #28a745;
+            }
+            """
             )
 
             # === INICIAR HILO DE ESTADO CORREGIDO ===
             if self.current_tracker:
                 self.status_thread = StatusUpdateThread(self.current_tracker)
-                self.status_thread.status_updated.connect(
-                    self._update_status_display
-                )
-                self.status_thread.error_occurred.connect(
-                    self._handle_status_error
-                )  # ← LÍNEA CORREGIDA
+                self.status_thread.status_updated.connect(self._update_status_display)
+                self.status_thread.error_occurred.connect(self._handle_status_error)  # ← LÍNEA CORREGIDA
                 self.status_thread.start()
                 self._log("✅ Hilo de estado iniciado (versión corregida)")
             else:
