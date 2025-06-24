@@ -97,7 +97,7 @@ class MainGUI(QMainWindow):
         self.menu_config.addAction(self.action_edit_line)
 
         # ✅ MENÚ PTZ CORREGIDO Y COMPLETO
-        self._setup_ptz_menu()
+        self.create_ptz_menu()
 
         self.stacked_widget = QStackedWidget()
         self.main_layout.addWidget(self.stacked_widget)
@@ -145,6 +145,16 @@ class MainGUI(QMainWindow):
         self.action_ptz_stop_all = QAction("⏹️ Detener Todas las PTZ", self)
         self.action_ptz_stop_all.triggered.connect(self.stop_all_ptz)
         self.menu_ptz.addAction(self.action_ptz_stop_all)
+
+    def create_ptz_menu(self):
+        """Crear menú PTZ y agregar acciones disponibles"""
+        # Utilizar configuración existente del menú
+        self._setup_ptz_menu()
+
+        # NUEVO: Calibración PTZ
+        self.action_ptz_calibration = QAction("🎯 Calibrar PTZ", self)
+        self.action_ptz_calibration.triggered.connect(self.open_ptz_calibration)
+        self.menu_ptz.addAction(self.action_ptz_calibration)
 
     def abrir_configuracion_modal(self):
         """Abrir modal de configuración - MÉTODO CORREGIDO"""
@@ -1126,6 +1136,38 @@ el rendimiento basado en la actividad de la escena."""
                 f"❌ Error inesperado al abrir diálogo PTZ:\n{e}\n\n"
                 f"Revise la consola para más detalles."
             )
+
+    def open_ptz_calibration(self):
+        """Abrir calibración PTZ"""
+        try:
+            from ui.ptz_calibration_dialog import create_calibration_dialog
+
+            selected_camera = None
+            for cam in self.camera_data_list:
+                if cam.get('tipo') == 'ptz':
+                    selected_camera = cam
+                    break
+
+            if not selected_camera:
+                QMessageBox.warning(
+                    self,
+                    "Sin cámaras PTZ",
+                    "No se encontraron cámaras PTZ configuradas."
+                )
+                return
+
+            dialog = create_calibration_dialog(self, selected_camera)
+            if dialog:
+                dialog.calibration_completed.connect(self._on_calibration_completed)
+                dialog.exec()
+
+        except Exception as e:
+            self.append_debug(f"❌ Error abriendo calibración: {e}")
+
+    def _on_calibration_completed(self, camera_ip):
+        """Manejar calibración completada"""
+
+        self.append_debug(f"✅ Calibración completada para {camera_ip}")
 
     def initialize_ptz_system(self):
         """Inicializa manualmente el sistema PTZ"""
