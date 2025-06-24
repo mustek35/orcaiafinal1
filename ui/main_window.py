@@ -312,34 +312,6 @@ class MainGUI(QMainWindow):
             )
 
     # ✅ NUEVO: Integración con sistema de detección
-    def process_detections_for_ptz(self, results, frame_shape, camera_id=None):
-        """
-        Procesar detecciones para PTZ multi-objeto
-        
-        Args:
-            results: Resultados de YOLO/detección
-            frame_shape: Forma del frame (H, W, C)
-            camera_id: ID de la cámara (opcional)
-        """
-        # Solo procesar si el sistema PTZ multi-objeto está activo
-        if not self.ptz_detection_bridge:
-            return 0
-        
-        try:
-            # Procesar resultados de YOLO
-            detections_count = self.ptz_detection_bridge.process_yolo_results(
-                results, frame_shape
-            )
-            
-            if detections_count > 0:
-                self.append_debug(f"🎯 PTZ: {detections_count} detección(es) enviada(s) al sistema PTZ")
-            
-            return detections_count
-            
-        except Exception as e:
-            self.append_debug(f"⚠️ Error enviando detecciones al PTZ: {e}")
-            return 0
-
     def send_custom_detections_to_ptz(self, detections_list):
         """
         Enviar detecciones personalizadas al PTZ
@@ -355,6 +327,16 @@ class MainGUI(QMainWindow):
             self.append_debug(f"🎯 PTZ: {len(detections_list)} detección(es) personalizada(s) enviada(s)")
         except Exception as e:
             self.append_debug(f"⚠️ Error enviando detecciones personalizadas al PTZ: {e}")
+
+    def cleanup_ptz_system(self):
+        """Limpiar sistema PTZ al cerrar la aplicación"""
+        try:
+            if hasattr(self, 'ptz_detection_bridge') and self.ptz_detection_bridge:
+                self.ptz_detection_bridge.cleanup()
+                self.ptz_detection_bridge = None
+                self.append_debug("🧹 Sistema PTZ limpiado")
+        except Exception as e:
+            self.append_debug(f"❌ Error limpiando sistema PTZ: {e}")
 
     def send_detections_to_ptz(self, camera_id: str, detections):
         """Enviar detecciones al sistema PTZ si está activo"""
@@ -378,15 +360,119 @@ class MainGUI(QMainWindow):
         except Exception as e:
             return {'error': str(e)}
 
-    def cleanup_ptz_system(self):
-        """Limpiar sistema PTZ al cerrar la aplicación"""
+    def get_ptz_bridge_status(self):
+        """Verificar estado del puente PTZ (para debugging)"""
         try:
             if hasattr(self, 'ptz_detection_bridge') and self.ptz_detection_bridge:
-                self.ptz_detection_bridge.cleanup()
-                self.ptz_detection_bridge = None
-                self.append_debug("🧹 Sistema PTZ limpiado")
+                status = {
+                    'active': True,
+                    'cameras_registered': len(self.ptz_detection_bridge.active_cameras),
+                    'detection_count': self.ptz_detection_bridge.detection_count,
+                    'active_cameras': list(self.ptz_detection_bridge.active_cameras.keys())
+                }
+                return status
+            else:
+                return {
+                    'active': False,
+                    'error': 'Puente PTZ no inicializado'
+                }
         except Exception as e:
-            self.append_debug(f"❌ Error limpiando sistema PTZ: {e}")
+            return {
+                'active': False,
+                'error': str(e)
+            }
+
+    def process_detections_for_ptz(self, results, frame_shape, camera_id=None):
+        """Procesar detecciones para PTZ multi-objeto (Formato YOLO completo)"""
+        if not hasattr(self, 'ptz_detection_bridge') or not self.ptz_detection_bridge:
+            return 0
+
+        try:
+            if hasattr(self.ptz_detection_bridge, 'process_yolo_results'):
+                detections_count = self.ptz_detection_bridge.process_yolo_results(
+                    results, frame_shape
+                )
+            else:
+                detections_count = self._convert_and_send_detections(results, camera_id)
+
+            if detections_count > 0:
+                self.append_debug(
+                    f"🎯 PTZ: {detections_count} detección(es) enviada(s) al sistema PTZ"
+                )
+
+            return detections_count
+
+        except Exception as e:
+            self.append_debug(f"⚠️ Error enviando detecciones al PTZ: {e}")
+            return 0
+
+    def _convert_and_send_detections(self, results, camera_id):
+        """Convertir detecciones YOLO a formato básico y enviar al PTZ"""
+        try:
+            if not results or not hasattr(results, 'boxes'):
+                return 0
+
+            detections_list = []
+            boxes = results.boxes
+
+            if boxes is not None and len(boxes) > 0:
+                for i, box in enumerate(boxes):
+                    xyxy = box.xyxy[0].cpu().numpy()
+                    conf = float(box.conf[0].cpu().numpy())
+                    cls = int(box.cls[0].cpu().numpy())
+
+                    x1, y1, x2, y2 = xyxy
+                    cx = float((x1 + x2) / 2)
+                    cy = float((y1 + y2) / 2)
+                    width = float(x2 - x1)
+                    height = float(y2 - y1)
+
+                    detection = {
+                        'cx': cx,
+                        'cy': cy,
+                        'width': width,
+                        'height': height,
+                        'confidence': conf,
+                        'class': cls,
+                        'bbox': [float(x1), float(y1), float(x2), float(y2)],
+                        'frame_w': results.orig_shape[1] if hasattr(results, 'orig_shape') else 1920,
+                        'frame_h': results.orig_shape[0] if hasattr(results, 'orig_shape') else 1080
+                    }
+                    detections_list.append(detection)
+
+            if detections_list and camera_id:
+                success = self.send_detections_to_ptz(camera_id, detections_list)
+                return len(detections_list) if success else 0
+
+            return 0
+
+        except Exception as e:
+            self.append_debug(f"❌ Error convirtiendo detecciones para PTZ: {e}")
+            return 0
+
+    def register_camera_with_ptz(self, camera_data):
+        """Registrar una cámara con el sistema PTZ"""
+        try:
+            if hasattr(self, 'ptz_detection_bridge') and self.ptz_detection_bridge:
+                camera_id = camera_data.get('ip', camera_data.get('id', 'unknown'))
+
+                if camera_data.get('tipo') == 'ptz':
+                    success = self.ptz_detection_bridge.register_camera(camera_id, camera_data)
+                    if success:
+                        self.append_debug(f"📷 Cámara PTZ registrada: {camera_id}")
+                        return True
+                    else:
+                        self.append_debug(f"❌ Error registrando cámara PTZ: {camera_id}")
+                else:
+                    self.append_debug(
+                        f"📹 Cámara fija preparada para envío de detecciones: {camera_id}"
+                    )
+                    return True
+
+            return False
+        except Exception as e:
+            self.append_debug(f"❌ Error registrando cámara con PTZ: {e}")
+            return False
 
     def add_adaptive_sampling_menu_items(self):
         """Agrega elementos del menú de muestreo adaptativo"""
