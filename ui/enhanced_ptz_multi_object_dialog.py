@@ -1,12 +1,14 @@
-# ui/enhanced_ptz_multi_object_dialog.py
+# ui/enhanced_ptz_multi_object_dialog.py - VERSIÓN CORREGIDA
 """
-Diálogo PTZ mejorado con seguimiento multi-objeto y zoom inteligente
+Diálogo PTZ mejorado con seguimiento multi-objeto y zoom inteligente - CORREGIDO
 Interfaz completa para control avanzado de cámaras PTZ con capacidades:
 - Seguimiento de múltiples objetos con alternancia
 - Zoom automático inteligente  
 - Configuración de prioridades
 - Monitoreo en tiempo real
 - Estadísticas y análisis
+
+CORRECCIÓN APLICADA: Solucionado error 'NoneType' object has no attribute 'get'
 """
 
 from PyQt6.QtWidgets import (
@@ -26,36 +28,7 @@ import sys
 from typing import Optional, Dict, List, Any
 from datetime import datetime
 
-# ===== IMPORTACIONES CON MANEJO ROBUSTO DE ERRORES =====
-
-# Variables globales para controlar disponibilidad
-MULTI_OBJECT_AVAILABLE = False
-INTEGRATION_AVAILABLE = False
-BASIC_PTZ_AVAILABLE = False
-
-# Clases importadas (inicialmente None)
-MultiObjectPTZTracker = None
-MultiObjectConfig = None
-TrackingMode = None
-ObjectPriority = None
-create_multi_object_tracker = None
-get_preset_config = None
-PRESET_CONFIGS = []
-analyze_tracking_performance = None
-
-PTZTrackingSystemEnhanced = None
-start_ptz_session = None
-stop_ptz_session = None
-update_ptz_detections = None
-process_ptz_yolo_results = None
-get_ptz_status = None
-
-PTZCameraONVIF = None
-
-# ===== INTENTAR IMPORTACIONES =====
-print("🔍 Iniciando importaciones del sistema PTZ multi-objeto...")
-
-# 1. Intentar importar sistema multi-objeto
+# Importar sistema multi-objeto
 try:
     from core.multi_object_ptz_system import (
         MultiObjectPTZTracker, MultiObjectConfig, TrackingMode, ObjectPriority,
@@ -63,76 +36,143 @@ try:
         analyze_tracking_performance
     )
     MULTI_OBJECT_AVAILABLE = True
-    print("✅ Sistema multi-objeto importado correctamente")
 except ImportError as e:
     print(f"⚠️ Sistema multi-objeto no disponible: {e}")
-    # Crear clases básicas como fallback
-    class MultiObjectConfig:
-        def __init__(self, **kwargs):
-            self.alternating_enabled = kwargs.get('alternating_enabled', True)
-            self.primary_follow_time = kwargs.get('primary_follow_time', 5.0)
-            self.secondary_follow_time = kwargs.get('secondary_follow_time', 3.0)
-            self.auto_zoom_enabled = kwargs.get('auto_zoom_enabled', True)
-            
-    class TrackingMode:
-        SINGLE_OBJECT = "single"
-        MULTI_OBJECT_ALTERNATING = "alternating"
-        
-    class ObjectPriority:
-        HIGH_CONFIDENCE = "high_confidence"
-        MOVING = "moving"
-        
-    PRESET_CONFIGS = ['basic', 'advanced']
+    MULTI_OBJECT_AVAILABLE = False
 
-# 2. Intentar importar sistema de integración
+# Importar sistema de integración
 try:
     from core.ptz_tracking_integration_enhanced import (
         PTZTrackingSystemEnhanced, start_ptz_session, stop_ptz_session,
         update_ptz_detections, process_ptz_yolo_results, get_ptz_status
     )
     INTEGRATION_AVAILABLE = True
-    print("✅ Sistema de integración importado correctamente")
 except ImportError as e:
     print(f"⚠️ Sistema de integración no disponible: {e}")
+    INTEGRATION_AVAILABLE = False
 
-# 3. Intentar importar sistema básico
+# Importar sistema básico como fallback
 try:
     from core.ptz_control import PTZCameraONVIF
     BASIC_PTZ_AVAILABLE = True
-    print("✅ Sistema PTZ básico importado correctamente")
-except ImportError as e:
-    print(f"⚠️ Sistema PTZ básico no disponible: {e}")
+except ImportError:
+    BASIC_PTZ_AVAILABLE = False
 
-print(f"📊 Estado de importaciones:")
-print(f"   - Multi-objeto: {'✅' if MULTI_OBJECT_AVAILABLE else '❌'}")
-print(f"   - Integración: {'✅' if INTEGRATION_AVAILABLE else '❌'}")
-print(f"   - PTZ Básico: {'✅' if BASIC_PTZ_AVAILABLE else '❌'}")
-
+# === CLASE STATUSUPDATETHREAD CORREGIDA ===
 class StatusUpdateThread(QThread):
-    """Hilo para actualizar estado del sistema PTZ"""
+    """Hilo CORREGIDO para actualizar estado del sistema PTZ"""
     status_updated = pyqtSignal(dict)
     error_occurred = pyqtSignal(str)
     
-    def __init__(self, tracker):
+    def __init__(self, tracker=None):
         super().__init__()
         self.tracker = tracker
         self.running = True
+        self.error_count = 0
+        self.max_errors = 10  # Máximo errores antes de detener
         
     def run(self):
-        """Ejecutar actualizaciones de estado"""
-        while self.running and self.tracker:
+        """Ejecutar actualizaciones de estado con manejo de errores mejorado"""
+        while self.running:
             try:
-                if hasattr(self.tracker, 'get_status'):
-                    status = self.tracker.get_status()
-                    if status:
-                        self.status_updated.emit(status)
-                time.sleep(0.5)  # Actualizar cada 500ms
-            except Exception as e:
-                self.error_occurred.emit(str(e))
-                break
+                # Verificar que el tracker existe y es válido
+                if not self.tracker:
+                    time.sleep(1.0)
+                    continue
                 
+                # Intentar obtener estado del tracker de forma segura
+                status = self._get_safe_status()
+                
+                if status and isinstance(status, dict):
+                    # Resetear contador de errores si obtenemos estado válido
+                    self.error_count = 0
+                    self.status_updated.emit(status)
+                else:
+                    # Incrementar contador de errores
+                    self.error_count += 1
+                    if self.error_count >= self.max_errors:
+                        break
+                
+                # Esperar antes de la siguiente actualización
+                time.sleep(0.5)  # 500ms entre actualizaciones
+                
+            except Exception as e:
+                self.error_count += 1
+                error_msg = f"Error en StatusThread: {e}"
+                self.error_occurred.emit(error_msg)
+                
+                # Si hay demasiados errores, detener el hilo
+                if self.error_count >= self.max_errors:
+                    break
+                
+                # Esperar más tiempo si hay errores
+                time.sleep(1.0)
+    
+    def _get_safe_status(self):
+        """Obtener estado del tracker de forma segura"""
+        try:
+            # Verificar que el tracker tiene método get_status
+            if not hasattr(self.tracker, 'get_status'):
+                return self._create_default_status("Tracker sin método get_status")
+            
+            # Intentar obtener estado
+            status = self.tracker.get_status()
+            
+            # Verificar que el estado es válido
+            if status is None:
+                return self._create_default_status("Estado None retornado")
+            
+            # Verificar que es un diccionario
+            if not isinstance(status, dict):
+                return self._create_default_status(f"Estado inválido: {type(status)}")
+            
+            # Asegurar campos mínimos requeridos
+            safe_status = self._ensure_required_fields(status)
+            return safe_status
+            
+        except Exception as e:
+            return self._create_default_status(f"Error: {e}")
+    
+    def _ensure_required_fields(self, status):
+        """Asegurar que el estado tiene todos los campos requeridos"""
+        safe_status = {
+            'connected': status.get('connected', False),
+            'tracking_active': status.get('tracking_active', False),
+            'successful_moves': status.get('successful_moves', 0),
+            'failed_moves': status.get('failed_moves', 0),
+            'total_detections': status.get('total_detections', 0),
+            'success_rate': status.get('success_rate', 0.0),
+            'ip': status.get('ip', 'unknown'),
+            'active_objects': status.get('active_objects', 0),
+            'current_target': status.get('current_target', None),
+            'camera_ip': status.get('camera_ip', status.get('ip', 'unknown')),
+            'session_time': status.get('session_time', 0),
+            'switches_count': status.get('switches_count', 0),
+            'last_update': time.time()
+        }
+        return safe_status
+    
+    def _create_default_status(self, reason="Estado no disponible"):
+        """Crear estado por defecto cuando no se puede obtener del tracker"""
+        return {
+            'connected': False,
+            'tracking_active': False,
+            'successful_moves': 0,
+            'failed_moves': 0,
+            'total_detections': 0,
+            'success_rate': 0.0,
+            'ip': 'unknown',
+            'active_objects': 0,
+            'current_target': None,
+            'camera_ip': 'unknown',
+            'session_time': 0,
+            'switches_count': 0,
+            'status_error': reason,
+            'last_update': time.time()
+        }
+    
     def stop(self):
-        """Detener el hilo"""
+        """Detener el hilo de forma segura"""
         self.running = False
 
 class EnhancedMultiObjectPTZDialog(QDialog):
@@ -153,7 +193,7 @@ class EnhancedMultiObjectPTZDialog(QDialog):
         self.setMinimumSize(900, 700)
         
         # Verificar disponibilidad de sistemas
-        if not MULTI_OBJECT_AVAILABLE and not INTEGRATION_AVAILABLE and not BASIC_PTZ_AVAILABLE:
+        if not MULTI_OBJECT_AVAILABLE and not INTEGRATION_AVAILABLE:
             self._show_error_dialog()
             return
         
@@ -171,1249 +211,963 @@ class EnhancedMultiObjectPTZDialog(QDialog):
         if MULTI_OBJECT_AVAILABLE:
             self.multi_config = MultiObjectConfig()
         else:
-            self.multi_config = MultiObjectConfig()  # Usar fallback
+            self.multi_config = None
             
         self.config_file = "ptz_multi_object_ui_config.json"
         
-        # Inicializar interfaz
-        self._setup_ui()
-        self._load_configuration()
-        self._update_ui_state()
+        # Estadísticas
+        self.detection_count = 0
+        self.session_start_time = 0
+        self.performance_history = []
         
-        print("🎯 Diálogo PTZ multi-objeto inicializado")
-    
-    def _show_error_dialog(self):
-        """Mostrar diálogo de error por sistemas no disponibles"""
-        QMessageBox.critical(
-            self,
-            "Sistema No Disponible",
-            "❌ El sistema PTZ multi-objeto no está disponible.\n\n"
-            "Archivos requeridos:\n"
-            "• core/multi_object_ptz_system.py\n"
-            "• core/ptz_tracking_integration_enhanced.py\n"
-            "• core/ptz_control.py\n\n"
-            "Dependencias:\n"
-            "• pip install onvif-zeep numpy\n\n"
-            "Verifique la instalación y reinicie la aplicación."
-        )
-        self.close()
-    
-    def _setup_ui(self):
-        """Configurar interfaz de usuario"""
+        # Timer para actualización de UI
+        self.ui_update_timer = QTimer()
+        self.ui_update_timer.timeout.connect(self._update_ui_displays)
+        self.ui_update_timer.start(1000)  # Cada segundo
+        
+        # Configurar interfaz
+        self._setup_enhanced_ui()
+        self._connect_all_signals()
+        self._load_camera_configuration()
+        self._load_ui_configuration()
+        
+        # Aplicar tema
+        self._apply_dark_theme()
+        
+        self._log("🎯 Sistema PTZ Multi-Objeto inicializado")
+
+    def closeEvent(self, event):
+        """Manejar cierre del diálogo con limpieza completa de recursos"""
+        print("INFO: Iniciando cierre de EnhancedMultiObjectPTZDialog...")
+        
         try:
-            # Layout principal
-            main_layout = QVBoxLayout(self)
+            # Detener seguimiento si está activo
+            if hasattr(self, 'tracking_active') and self.tracking_active:
+                self._log("🛑 Deteniendo seguimiento antes del cierre...")
+                self._stop_tracking()
             
-            # Título
-            title_label = QLabel("🎯 Control PTZ Multi-Objeto Avanzado")
-            title_label.setStyleSheet("font-size: 18px; font-weight: bold; margin: 10px;")
-            main_layout.addWidget(title_label)
+            # Detener hilo de estado
+            if hasattr(self, 'status_thread') and self.status_thread:
+                self.status_thread.stop()
+                self.status_thread.wait(2000)  # Esperar máximo 2 segundos
+                
+            # Detener timer de UI
+            if hasattr(self, 'ui_update_timer') and self.ui_update_timer:
+                self.ui_update_timer.stop()
             
-            # Widget de pestañas
-            self.tab_widget = QTabWidget()
-            main_layout.addWidget(self.tab_widget)
+            # Limpiar tracker
+            if hasattr(self, 'current_tracker') and self.current_tracker:
+                try:
+                    if hasattr(self.current_tracker, 'cleanup'):
+                        self.current_tracker.cleanup()
+                    self.current_tracker = None
+                    print("INFO: Tracker PTZ limpiado")
+                except Exception as e:
+                    print(f"WARN: Error limpiando tracker: {e}")
             
-            # Pestaña de control principal
-            self._setup_control_tab()
+            # Guardar configuración antes del cierre
+            self._save_ui_configuration()
             
-            # Pestaña de configuración
-            self._setup_config_tab()
-            
-            # Pestaña de monitoreo
-            self._setup_monitoring_tab()
-            
-            # Pestaña de estadísticas
-            self._setup_stats_tab()
-            
-            # Botones principales
-            self._setup_main_buttons(main_layout)
-            
-            # Barra de estado
-            self._setup_status_bar(main_layout)
+            print("INFO: Cierre de EnhancedMultiObjectPTZDialog completado")
+            event.accept()
             
         except Exception as e:
-            print(f"❌ Error configurando UI: {e}")
-            QMessageBox.critical(self, "Error UI", f"Error configurando interfaz: {e}")
-    
-    def _setup_control_tab(self):
-        """Configurar pestaña de control"""
-        control_widget = QWidget()
-        layout = QVBoxLayout(control_widget)
+            print(f"ERROR: Error durante cierre: {e}")
+            event.accept()  # Forzar cierre incluso con errores
+
+    def _setup_enhanced_ui(self):
+        """Configurar interfaz de usuario mejorada"""
+        layout = QVBoxLayout(self)
         
-        # Selección de cámara
-        camera_group = QGroupBox("📹 Selección de Cámara")
-        camera_layout = QHBoxLayout(camera_group)
+        # === HEADER ===
+        header_frame = QFrame()
+        header_frame.setFixedHeight(60)
+        header_layout = QHBoxLayout(header_frame)
         
-        camera_layout.addWidget(QLabel("Cámara PTZ:"))
+        title_label = QLabel("🎯 Control PTZ Multi-Objeto Avanzado")
+        title_label.setStyleSheet("""
+            QLabel {
+                font-size: 18px;
+                font-weight: bold;
+                color: #ffffff;
+                background: transparent;
+            }
+        """)
+        
+        self.system_status_label = QLabel("🔴 Sistema Inactivo")
+        self.system_status_label.setStyleSheet("""
+            QLabel {
+                font-size: 12px;
+                padding: 5px 10px;
+                border-radius: 15px;
+                background-color: #2d1b1b;
+                color: #dc3545;
+            }
+        """)
+        
+        header_layout.addWidget(title_label)
+        header_layout.addStretch()
+        header_layout.addWidget(self.system_status_label)
+        
+        layout.addWidget(header_frame)
+        
+        # === TABS PRINCIPALES ===
+        self.main_tabs = QTabWidget()
+        layout.addWidget(self.main_tabs)
+        
+        # Tab Control
+        self._create_control_tab()
+        
+        # Tab Configuración
+        self._create_config_tab()
+        
+        # Tab Monitoreo
+        self._create_monitoring_tab()
+        
+        # Tab Estadísticas
+        self._create_stats_tab()
+        
+        # === STATUS BAR ===
+        status_frame = QFrame()
+        status_frame.setFixedHeight(40)
+        status_layout = QHBoxLayout(status_frame)
+        
+        self.camera_status_label = QLabel("📷 Sin cámara")
+        self.tracking_time_label = QLabel("⏱️ 00:00:00")
+        self.detection_count_label = QLabel("🎯 0 detecciones")
+        
+        status_layout.addWidget(self.camera_status_label)
+        status_layout.addStretch()
+        status_layout.addWidget(self.tracking_time_label)
+        status_layout.addWidget(self.detection_count_label)
+        
+        layout.addWidget(status_frame)
+
+    def _create_control_tab(self):
+        """Crear tab de control principal"""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        
+        # === SELECCIÓN DE CÁMARA ===
+        camera_group = QGroupBox("📷 Selección de Cámara")
+        camera_layout = QFormLayout(camera_group)
+        
         self.camera_selector = QComboBox()
-        self._populate_camera_selector()
-        camera_layout.addWidget(self.camera_selector)
+        self.camera_selector.addItem("Seleccionar cámara...")
         
-        self.connect_button = QPushButton("🔗 Conectar")
-        self.connect_button.clicked.connect(self._connect_camera)
-        camera_layout.addWidget(self.connect_button)
+        # Cargar cámaras PTZ disponibles
+        ptz_cameras = [cam for cam in self.all_cameras if cam.get('tipo') == 'ptz']
+        for camera in ptz_cameras:
+            camera_name = f"{camera.get('nombre', camera.get('ip', 'Sin nombre'))} ({camera.get('ip', 'Sin IP')})"
+            self.camera_selector.addItem(camera_name, camera)
         
+        camera_layout.addRow("Cámara PTZ:", self.camera_selector)
         layout.addWidget(camera_group)
         
-        # Estado de conexión
-        status_group = QGroupBox("📡 Estado de Conexión")
-        status_layout = QFormLayout(status_group)
-        
-        self.connection_status = QLabel("❌ Desconectado")
-        status_layout.addRow("Estado:", self.connection_status)
-        
-        self.camera_info = QLabel("No hay información")
-        status_layout.addRow("Información:", self.camera_info)
-        
-        layout.addWidget(status_group)
-        
-        # Controles de seguimiento
+        # === CONTROL DE SEGUIMIENTO ===
         tracking_group = QGroupBox("🎯 Control de Seguimiento")
         tracking_layout = QVBoxLayout(tracking_group)
         
-        # Botones de seguimiento
-        tracking_buttons = QHBoxLayout()
+        # Botones principales
+        button_layout = QHBoxLayout()
         
-        self.start_tracking_button = QPushButton("▶️ Iniciar Seguimiento")
-        self.start_tracking_button.clicked.connect(self._start_tracking)
-        self.start_tracking_button.setEnabled(False)
-        tracking_buttons.addWidget(self.start_tracking_button)
+        self.start_btn = QPushButton("🚀 Iniciar Seguimiento")
+        self.start_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #28a745;
+                color: white;
+                font-size: 14px;
+                font-weight: bold;
+                padding: 10px 20px;
+                border-radius: 5px;
+                border: none;
+            }
+            QPushButton:hover {
+                background-color: #218838;
+            }
+            QPushButton:disabled {
+                background-color: #6c757d;
+            }
+        """)
         
-        self.stop_tracking_button = QPushButton("⏹️ Detener Seguimiento")
-        self.stop_tracking_button.clicked.connect(self._stop_tracking)
-        self.stop_tracking_button.setEnabled(False)
-        tracking_buttons.addWidget(self.stop_tracking_button)
+        self.stop_btn = QPushButton("⏹️ Detener")
+        self.stop_btn.setEnabled(False)
+        self.stop_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #dc3545;
+                color: white;
+                font-size: 14px;
+                font-weight: bold;
+                padding: 10px 20px;
+                border-radius: 5px;
+                border: none;
+            }
+            QPushButton:hover {
+                background-color: #c82333;
+            }
+            QPushButton:disabled {
+                background-color: #6c757d;
+            }
+        """)
         
-        self.emergency_stop_button = QPushButton("🚨 PARADA DE EMERGENCIA")
-        self.emergency_stop_button.clicked.connect(self._emergency_stop)
-        self.emergency_stop_button.setStyleSheet("background-color: red; color: white; font-weight: bold;")
-        tracking_buttons.addWidget(self.emergency_stop_button)
+        button_layout.addWidget(self.start_btn)
+        button_layout.addWidget(self.stop_btn)
+        button_layout.addStretch()
         
-        tracking_layout.addLayout(tracking_buttons)
+        tracking_layout.addLayout(button_layout)
         
-        # Estado del seguimiento
-        self.tracking_status = QLabel("⏸️ Detenido")
-        tracking_layout.addWidget(self.tracking_status)
+        # Modo de seguimiento
+        mode_layout = QFormLayout()
         
+        self.tracking_mode_selector = QComboBox()
+        self.tracking_mode_selector.addItems([
+            "Objeto Individual",
+            "Multi-Objeto Alternante",
+            "Basado en Prioridad",
+            "Cambio Automático"
+        ])
+        self.tracking_mode_selector.setCurrentText("Multi-Objeto Alternante")
+        
+        mode_layout.addRow("Modo:", self.tracking_mode_selector)
+        
+        tracking_layout.addLayout(mode_layout)
         layout.addWidget(tracking_group)
         
-        # Área de logs
-        log_group = QGroupBox("📋 Registro de Actividad")
-        log_layout = QVBoxLayout(log_group)
+        # === ESTADO ACTUAL ===
+        status_group = QGroupBox("📊 Estado Actual")
+        status_layout = QGridLayout(status_group)
         
-        self.log_display = QTextEdit()
-        self.log_display.setMaximumHeight(200)
-        self.log_display.setReadOnly(True)
-        log_layout.addWidget(self.log_display)
+        # Labels de estado
+        self.connection_status_label = QLabel("🔴 Desconectado")
+        self.tracking_status_label = QLabel("⏸️ Inactivo")
+        self.objects_count_label = QLabel("0")
+        self.current_target_label = QLabel("➖ Sin objetivo")
         
-        # Controles de log
-        log_controls = QHBoxLayout()
+        status_layout.addWidget(QLabel("Conexión:"), 0, 0)
+        status_layout.addWidget(self.connection_status_label, 0, 1)
+        status_layout.addWidget(QLabel("Seguimiento:"), 1, 0)
+        status_layout.addWidget(self.tracking_status_label, 1, 1)
+        status_layout.addWidget(QLabel("Objetos detectados:"), 2, 0)
+        status_layout.addWidget(self.objects_count_label, 2, 1)
+        status_layout.addWidget(QLabel("Objetivo actual:"), 3, 0)
+        status_layout.addWidget(self.current_target_label, 3, 1)
         
-        self.auto_scroll_checkbox = QCheckBox("Auto-scroll")
-        self.auto_scroll_checkbox.setChecked(True)
-        log_controls.addWidget(self.auto_scroll_checkbox)
+        layout.addWidget(status_group)
+        layout.addStretch()
         
-        clear_log_button = QPushButton("🗑️ Limpiar")
-        clear_log_button.clicked.connect(self.log_display.clear)
-        log_controls.addWidget(clear_log_button)
+        self.main_tabs.addTab(tab, "🎮 Control")
+
+    def _create_config_tab(self):
+        """Crear tab de configuración"""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
         
-        log_controls.addStretch()
-        log_layout.addLayout(log_controls)
-        
-        layout.addWidget(log_group)
-        
-        self.tab_widget.addTab(control_widget, "🎮 Control")
-    
-    def _setup_config_tab(self):
-        """Configurar pestaña de configuración"""
-        config_widget = QWidget()
-        layout = QVBoxLayout(config_widget)
-        
-        # Scroll area para la configuración
-        scroll = QScrollArea()
+        # Scroll area para configuraciones
+        scroll_area = QScrollArea()
         scroll_widget = QWidget()
         scroll_layout = QVBoxLayout(scroll_widget)
         
-        # Configuración de alternancia
-        if MULTI_OBJECT_AVAILABLE:
-            alternating_group = QGroupBox("🔄 Configuración de Alternancia")
-            alternating_layout = QFormLayout(alternating_group)
-            
-            self.alternating_enabled = QCheckBox("Habilitar alternancia entre objetos")
-            self.alternating_enabled.setChecked(True)
-            alternating_layout.addRow(self.alternating_enabled)
-            
-            self.primary_time = QDoubleSpinBox()
-            self.primary_time.setRange(1.0, 60.0)
-            self.primary_time.setValue(5.0)
-            self.primary_time.setSuffix(" segundos")
-            alternating_layout.addRow("Tiempo objetivo principal:", self.primary_time)
-            
-            self.secondary_time = QDoubleSpinBox()
-            self.secondary_time.setRange(1.0, 60.0)
-            self.secondary_time.setValue(3.0)
-            self.secondary_time.setSuffix(" segundos")
-            alternating_layout.addRow("Tiempo objetivo secundario:", self.secondary_time)
-            
-            scroll_layout.addWidget(alternating_group)
+        # === CONFIGURACIÓN DE DETECCIÓN ===
+        detection_group = QGroupBox("🔍 Configuración de Detección")
+        detection_layout = QFormLayout(detection_group)
         
-        # Configuración de zoom
-        zoom_group = QGroupBox("🔍 Configuración de Zoom Automático")
-        zoom_layout = QFormLayout(zoom_group)
-        
-        self.auto_zoom_enabled = QCheckBox("Habilitar zoom automático")
-        self.auto_zoom_enabled.setChecked(True)
-        zoom_layout.addRow(self.auto_zoom_enabled)
-        
-        self.target_ratio = QDoubleSpinBox()
-        self.target_ratio.setRange(0.1, 0.8)
-        self.target_ratio.setValue(0.25)
-        self.target_ratio.setDecimals(2)
-        zoom_layout.addRow("Ratio objetivo del objeto:", self.target_ratio)
-        
-        self.zoom_speed = QSlider(Qt.Orientation.Horizontal)
-        self.zoom_speed.setRange(1, 10)
-        self.zoom_speed.setValue(3)
-        zoom_layout.addRow("Velocidad de zoom:", self.zoom_speed)
-        
-        scroll_layout.addWidget(zoom_group)
-        
-        # Configuración de prioridades
-        priority_group = QGroupBox("⚖️ Configuración de Prioridades")
-        priority_layout = QFormLayout(priority_group)
-        
-        self.confidence_weight = QSlider(Qt.Orientation.Horizontal)
-        self.confidence_weight.setRange(0, 100)
-        self.confidence_weight.setValue(40)
-        priority_layout.addRow("Peso de confianza:", self.confidence_weight)
-        
-        self.movement_weight = QSlider(Qt.Orientation.Horizontal)
-        self.movement_weight.setRange(0, 100)
-        self.movement_weight.setValue(30)
-        priority_layout.addRow("Peso de movimiento:", self.movement_weight)
-        
-        self.size_weight = QSlider(Qt.Orientation.Horizontal)
-        self.size_weight.setRange(0, 100)
-        self.size_weight.setValue(20)
-        priority_layout.addRow("Peso de tamaño:", self.size_weight)
-        
-        scroll_layout.addWidget(priority_group)
-        
-        # Configuración avanzada
-        advanced_group = QGroupBox("⚙️ Configuración Avanzada")
-        advanced_layout = QFormLayout(advanced_group)
+        self.confidence_threshold = QDoubleSpinBox()
+        self.confidence_threshold.setRange(0.1, 1.0)
+        self.confidence_threshold.setValue(0.5)
+        self.confidence_threshold.setSingleStep(0.05)
+        self.confidence_threshold.setDecimals(2)
         
         self.max_objects = QSpinBox()
         self.max_objects.setRange(1, 10)
         self.max_objects.setValue(3)
-        advanced_layout.addRow("Máximo objetos a rastrear:", self.max_objects)
         
-        self.confidence_threshold = QDoubleSpinBox()
-        self.confidence_threshold.setRange(0.1, 0.9)
-        self.confidence_threshold.setValue(0.5)
-        self.confidence_threshold.setDecimals(2)
-        advanced_layout.addRow("Umbral de confianza:", self.confidence_threshold)
+        detection_layout.addRow("Confianza mínima:", self.confidence_threshold)
+        detection_layout.addRow("Máximo objetos:", self.max_objects)
         
-        scroll_layout.addWidget(advanced_group)
+        scroll_layout.addWidget(detection_group)
         
-        # Botones de configuración
-        config_buttons = QHBoxLayout()
+        # === CONFIGURACIÓN DE ALTERNANCIA ===
+        alternating_group = QGroupBox("🔄 Configuración de Alternancia")
+        alternating_layout = QFormLayout(alternating_group)
         
-        save_config_button = QPushButton("💾 Guardar Configuración")
-        save_config_button.clicked.connect(self._save_configuration)
-        config_buttons.addWidget(save_config_button)
+        self.switch_interval = QDoubleSpinBox()
+        self.switch_interval.setRange(1.0, 30.0)
+        self.switch_interval.setValue(5.0)
+        self.switch_interval.setSuffix(" segundos")
         
-        load_config_button = QPushButton("📁 Cargar Configuración")
-        load_config_button.clicked.connect(self._load_configuration)
-        config_buttons.addWidget(load_config_button)
+        self.enable_alternating = QCheckBox("Habilitar alternancia automática")
+        self.enable_alternating.setChecked(True)
         
-        reset_config_button = QPushButton("🔄 Resetear")
-        reset_config_button.clicked.connect(self._reset_configuration)
-        config_buttons.addWidget(reset_config_button)
+        alternating_layout.addRow("Intervalo de cambio:", self.switch_interval)
+        alternating_layout.addRow(self.enable_alternating)
         
-        scroll_layout.addLayout(config_buttons)
+        scroll_layout.addWidget(alternating_group)
         
-        scroll.setWidget(scroll_widget)
-        layout.addWidget(scroll)
+        # === CONFIGURACIÓN DE ZOOM ===
+        zoom_group = QGroupBox("🔍 Configuración de Zoom")
+        zoom_layout = QFormLayout(zoom_group)
         
-        self.tab_widget.addTab(config_widget, "⚙️ Configuración")
-    
-    def _setup_monitoring_tab(self):
-        """Configurar pestaña de monitoreo"""
-        monitoring_widget = QWidget()
-        layout = QVBoxLayout(monitoring_widget)
+        self.enable_auto_zoom = QCheckBox("Habilitar zoom automático")
+        self.enable_auto_zoom.setChecked(True)
         
-        # Información de objetos detectados
-        objects_group = QGroupBox("🔍 Objetos Detectados")
+        self.zoom_speed = QDoubleSpinBox()
+        self.zoom_speed.setRange(0.1, 1.0)
+        self.zoom_speed.setValue(0.3)
+        self.zoom_speed.setSingleStep(0.1)
+        self.zoom_speed.setDecimals(1)
+        
+        zoom_layout.addRow(self.enable_auto_zoom)
+        zoom_layout.addRow("Velocidad de zoom:", self.zoom_speed)
+        
+        scroll_layout.addWidget(zoom_group)
+        
+        # === CONFIGURACIÓN DE PRIORIDADES ===
+        priority_group = QGroupBox("⚖️ Pesos de Prioridad")
+        priority_layout = QFormLayout(priority_group)
+        
+        self.confidence_weight = QDoubleSpinBox()
+        self.confidence_weight.setRange(0.0, 1.0)
+        self.confidence_weight.setValue(0.4)
+        self.confidence_weight.setSingleStep(0.1)
+        self.confidence_weight.setDecimals(1)
+        
+        self.movement_weight = QDoubleSpinBox()
+        self.movement_weight.setRange(0.0, 1.0)
+        self.movement_weight.setValue(0.3)
+        self.movement_weight.setSingleStep(0.1)
+        self.movement_weight.setDecimals(1)
+        
+        self.size_weight = QDoubleSpinBox()
+        self.size_weight.setRange(0.0, 1.0)
+        self.size_weight.setValue(0.2)
+        self.size_weight.setSingleStep(0.1)
+        self.size_weight.setDecimals(1)
+        
+        self.proximity_weight = QDoubleSpinBox()
+        self.proximity_weight.setRange(0.0, 1.0)
+        self.proximity_weight.setValue(0.1)
+        self.proximity_weight.setSingleStep(0.1)
+        self.proximity_weight.setDecimals(1)
+        
+        priority_layout.addRow("Peso confianza:", self.confidence_weight)
+        priority_layout.addRow("Peso movimiento:", self.movement_weight)
+        priority_layout.addRow("Peso tamaño:", self.size_weight)
+        priority_layout.addRow("Peso proximidad:", self.proximity_weight)
+        
+        scroll_layout.addWidget(priority_group)
+        scroll_layout.addStretch()
+        
+        scroll_area.setWidget(scroll_widget)
+        layout.addWidget(scroll_area)
+        
+        self.main_tabs.addTab(tab, "⚙️ Configuración")
+
+    def _create_monitoring_tab(self):
+        """Crear tab de monitoreo en tiempo real"""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        
+        # === OBJETOS DETECTADOS ===
+        objects_group = QGroupBox("🎯 Objetos Detectados")
         objects_layout = QVBoxLayout(objects_group)
         
         self.objects_table = QTableWidget()
-        self.objects_table.setColumnCount(6)
-        self.objects_table.setHorizontalHeaderLabels([
-            "ID", "Posición (X,Y)", "Tamaño", "Confianza", "Estado", "Tiempo"
-        ])
-        self.objects_table.horizontalHeader().setStretchLastSection(True)
-        objects_layout.addWidget(self.objects_table)
+        self.objects_table.setColumnCount(4)
+        self.objects_table.setHorizontalHeaderLabels(["ID", "Tipo", "Confianza", "Estado"])
         
+        # Configurar tabla
+        header = self.objects_table.horizontalHeader()
+        header.setStretchLastSection(True)
+        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        
+        objects_layout.addWidget(self.objects_table)
         layout.addWidget(objects_group)
         
-        # Estado del sistema
-        system_group = QGroupBox("📊 Estado del Sistema")
-        system_layout = QFormLayout(system_group)
+        # === LOG DEL SISTEMA ===
+        log_group = QGroupBox("📝 Log del Sistema")
+        log_layout = QVBoxLayout(log_group)
         
-        self.current_target = QLabel("Ninguno")
-        system_layout.addRow("Objetivo actual:", self.current_target)
-        
-        self.zoom_level = QLabel("50%")
-        system_layout.addRow("Nivel de zoom:", self.zoom_level)
-        
-        self.pan_tilt_speed = QLabel("0.0, 0.0")
-        system_layout.addRow("Velocidad Pan/Tilt:", self.pan_tilt_speed)
-        
-        self.detection_count = QLabel("0")
-        system_layout.addRow("Detecciones procesadas:", self.detection_count)
-        
-        layout.addWidget(system_group)
-        
-        self.tab_widget.addTab(monitoring_widget, "📊 Monitoreo")
-    
-    def _setup_stats_tab(self):
-        """Configurar pestaña de estadísticas"""
-        stats_widget = QWidget()
-        layout = QVBoxLayout(stats_widget)
-        
-        # Estadísticas de rendimiento
-        performance_group = QGroupBox("📈 Estadísticas de Rendimiento")
-        performance_layout = QFormLayout(performance_group)
-        
-        self.session_duration = QLabel("0:00:00")
-        performance_layout.addRow("Duración de sesión:", self.session_duration)
-        
-        self.successful_tracks = QLabel("0")
-        performance_layout.addRow("Seguimientos exitosos:", self.successful_tracks)
-        
-        self.failed_tracks = QLabel("0")
-        performance_layout.addRow("Seguimientos fallidos:", self.failed_tracks)
-        
-        self.switch_count = QLabel("0")
-        performance_layout.addRow("Cambios de objetivo:", self.switch_count)
-        
-        self.zoom_changes = QLabel("0")
-        performance_layout.addRow("Cambios de zoom:", self.zoom_changes)
-        
-        layout.addWidget(performance_group)
-        
-        # Gráficos de rendimiento (placeholder)
-        charts_group = QGroupBox("📊 Gráficos de Rendimiento")
-        charts_layout = QVBoxLayout(charts_group)
-        
-        self.performance_chart = QLabel("📊 Gráficos disponibles próximamente...")
-        self.performance_chart.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.performance_chart.setMinimumHeight(200)
-        self.performance_chart.setStyleSheet("border: 1px solid gray; background-color: #f0f0f0;")
-        charts_layout.addWidget(self.performance_chart)
-        
-        layout.addWidget(charts_group)
-        
-        # Botones de estadísticas
-        stats_buttons = QHBoxLayout()
-        
-        export_stats_button = QPushButton("📤 Exportar Estadísticas")
-        export_stats_button.clicked.connect(self._export_statistics)
-        stats_buttons.addWidget(export_stats_button)
-        
-        reset_stats_button = QPushButton("🔄 Resetear Estadísticas")
-        reset_stats_button.clicked.connect(self._reset_statistics)
-        stats_buttons.addWidget(reset_stats_button)
-        
-        layout.addLayout(stats_buttons)
-        
-        self.tab_widget.addTab(stats_widget, "📈 Estadísticas")
-    
-    def _setup_main_buttons(self, layout):
-        """Configurar botones principales"""
-        buttons_layout = QHBoxLayout()
-        
-        self.test_connection_button = QPushButton("🔧 Probar Conexión")
-        self.test_connection_button.clicked.connect(self._test_connection)
-        buttons_layout.addWidget(self.test_connection_button)
-        
-        buttons_layout.addStretch()
-        
-        help_button = QPushButton("❓ Ayuda")
-        help_button.clicked.connect(self._show_help)
-        buttons_layout.addWidget(help_button)
-        
-        close_button = QPushButton("✖️ Cerrar")
-        close_button.clicked.connect(self.close)
-        buttons_layout.addWidget(close_button)
-        
-        layout.addLayout(buttons_layout)
-    
-    def _setup_status_bar(self, layout):
-        """Configurar barra de estado"""
         self.status_display = QTextEdit()
-        self.status_display.setMaximumHeight(100)
-        self.status_display.setReadOnly(True)
-        self.status_display.setStyleSheet("background-color: #f8f8f8; font-family: monospace;")
+        self.status_display.setMaximumHeight(200)
+        self.status_display.setStyleSheet("""
+            QTextEdit {
+                background-color: #1e1e1e;
+                color: #ffffff;
+                font-family: 'Consolas', monospace;
+                font-size: 10pt;
+                border: 1px solid #555555;
+                border-radius: 5px;
+            }
+        """)
         
-        # Timer para actualizar estado
-        self.status_timer = QTimer()
-        self.status_timer.timeout.connect(self._update_status_display)
-        self.status_timer.start(1000)  # Actualizar cada segundo
+        # Controles del log
+        log_controls = QHBoxLayout()
         
-        layout.addWidget(QLabel("💻 Estado del Sistema:"))
-        layout.addWidget(self.status_display)
+        self.auto_scroll_checkbox = QCheckBox("Auto-scroll")
+        self.auto_scroll_checkbox.setChecked(True)
         
-        self._log("✅ Sistema PTZ multi-objeto inicializado")
-    
-    def _populate_camera_selector(self):
-        """Poblar selector de cámaras con cámaras PTZ"""
-        self.camera_selector.clear()
+        clear_log_btn = QPushButton("🗑️ Limpiar Log")
+        clear_log_btn.clicked.connect(self.status_display.clear)
         
-        ptz_cameras = [cam for cam in self.all_cameras if cam.get('tipo') == 'ptz']
+        log_controls.addWidget(self.auto_scroll_checkbox)
+        log_controls.addStretch()
+        log_controls.addWidget(clear_log_btn)
         
-        if not ptz_cameras:
-            self.camera_selector.addItem("❌ No hay cámaras PTZ configuradas")
-            self.camera_selector.setEnabled(False)
-            return
+        log_layout.addWidget(self.status_display)
+        log_layout.addLayout(log_controls)
         
-        for camera in ptz_cameras:
-            camera_name = camera.get('nombre', f"PTZ-{camera.get('ip', 'Unknown')}")
-            camera_ip = camera.get('ip', 'Unknown IP')
-            display_text = f"{camera_name} ({camera_ip})"
-            self.camera_selector.addItem(display_text)
-            
-        self.camera_selector.setEnabled(True)
-        self._log(f"📹 {len(ptz_cameras)} cámaras PTZ disponibles")
-    
-    def _connect_camera(self):
-        """Conectar a la cámara seleccionada"""
+        layout.addWidget(log_group)
+        
+        self.main_tabs.addTab(tab, "📊 Monitoreo")
+
+    def _create_stats_tab(self):
+        """Crear tab de estadísticas"""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        
+        # === ESTADÍSTICAS DE RENDIMIENTO ===
+        stats_group = QGroupBox("📈 Estadísticas de Rendimiento")
+        stats_layout = QGridLayout(stats_group)
+        
+        # Labels para estadísticas
+        self.session_time_label = QLabel("00:00:00")
+        self.total_detections_label = QLabel("0")
+        self.success_rate_label = QLabel("0.0%")
+        self.moves_count_label = QLabel("0/0")
+        self.switches_count_label = QLabel("0")
+        
+        stats_layout.addWidget(QLabel("Tiempo de sesión:"), 0, 0)
+        stats_layout.addWidget(self.session_time_label, 0, 1)
+        stats_layout.addWidget(QLabel("Total detecciones:"), 1, 0)
+        stats_layout.addWidget(self.total_detections_label, 1, 1)
+        stats_layout.addWidget(QLabel("Tasa de éxito:"), 2, 0)
+        stats_layout.addWidget(self.success_rate_label, 2, 1)
+        stats_layout.addWidget(QLabel("Movimientos (éxito/total):"), 3, 0)
+        stats_layout.addWidget(self.moves_count_label, 3, 1)
+        stats_layout.addWidget(QLabel("Cambios de objetivo:"), 4, 0)
+        stats_layout.addWidget(self.switches_count_label, 4, 1)
+        
+        layout.addWidget(stats_group)
+        
+        # === GRÁFICO DE RENDIMIENTO (placeholder) ===
+        chart_group = QGroupBox("📊 Rendimiento en Tiempo Real")
+        chart_layout = QVBoxLayout(chart_group)
+        
+        # Placeholder para gráfico
+        chart_placeholder = QLabel("📊 Gráfico de rendimiento\n(Implementar con matplotlib)")
+        chart_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        chart_placeholder.setStyleSheet("""
+            QLabel {
+                border: 2px dashed #555555;
+                border-radius: 10px;
+                padding: 20px;
+                color: #888888;
+                font-size: 14px;
+            }
+        """)
+        chart_placeholder.setMinimumHeight(200)
+        
+        chart_layout.addWidget(chart_placeholder)
+        layout.addWidget(chart_group)
+        
+        layout.addStretch()
+        
+        self.main_tabs.addTab(tab, "📈 Estadísticas")
+
+    def _connect_all_signals(self):
+        """Conectar todas las señales de la interfaz"""
+        # Controles principales
+        self.start_btn.clicked.connect(self._start_tracking)
+        self.stop_btn.clicked.connect(self._stop_tracking)
+        
+        # Selectores
+        self.camera_selector.currentIndexChanged.connect(self._on_camera_changed)
+        self.tracking_mode_selector.currentTextChanged.connect(self._on_mode_changed)
+        
+        # Configuración
+        self.confidence_threshold.valueChanged.connect(self._on_config_changed)
+        self.switch_interval.valueChanged.connect(self._on_config_changed)
+        self.enable_alternating.stateChanged.connect(self._on_config_changed)
+
+    def _apply_dark_theme(self):
+        """Aplicar tema oscuro moderno"""
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #2b2b2b;
+                color: #ffffff;
+            }
+            QGroupBox {
+                font-weight: bold;
+                border: 2px solid #555555;
+                border-radius: 5px;
+                margin-top: 1ex;
+                padding-top: 10px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px 0 5px;
+            }
+            QTabWidget::pane {
+                border: 1px solid #555555;
+                background-color: #3b3b3b;
+            }
+            QTabBar::tab {
+                background-color: #555555;
+                color: #ffffff;
+                padding: 8px 16px;
+                margin-right: 2px;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+            }
+            QTabBar::tab:selected {
+                background-color: #3b3b3b;
+                border-bottom: 2px solid #007bff;
+            }
+            QComboBox, QSpinBox, QDoubleSpinBox {
+                background-color: #555555;
+                color: #ffffff;
+                border: 1px solid #777777;
+                border-radius: 3px;
+                padding: 5px;
+            }
+            QComboBox::drop-down {
+                border: none;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 5px solid #ffffff;
+            }
+            QCheckBox {
+                color: #ffffff;
+            }
+            QCheckBox::indicator {
+                width: 18px;
+                height: 18px;
+            }
+            QCheckBox::indicator:unchecked {
+                background-color: #555555;
+                border: 1px solid #777777;
+                border-radius: 3px;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #007bff;
+                border: 1px solid #007bff;
+                border-radius: 3px;
+            }
+            QTableWidget {
+                background-color: #3b3b3b;
+                color: #ffffff;
+                border: 1px solid #555555;
+                gridline-color: #555555;
+            }
+            QHeaderView::section {
+                background-color: #555555;
+                color: #ffffff;
+                border: 1px solid #777777;
+                padding: 5px;
+            }
+        """)
+
+    def _load_camera_configuration(self):
+        """Cargar configuración de cámaras"""
         try:
-            if self.camera_selector.currentIndex() < 0:
-                self._log("❌ No hay cámara seleccionada")
-                return
-            
-            camera_index = self.camera_selector.currentIndex()
-            ptz_cameras = [cam for cam in self.all_cameras if cam.get('tipo') == 'ptz']
-            
-            if camera_index >= len(ptz_cameras):
-                self._log("❌ Índice de cámara inválido")
-                return
-            
-            selected_camera = ptz_cameras[camera_index]
-            self.current_camera_data = selected_camera
-            
-            self._log(f"🔗 Conectando a {selected_camera.get('nombre', 'PTZ')}...")
-            
-            # Intentar crear tracker si está disponible
-            if MULTI_OBJECT_AVAILABLE and MultiObjectPTZTracker:
-                try:
-                    self.current_tracker = MultiObjectPTZTracker(
-                        ip=selected_camera.get('ip', ''),
-                        port=selected_camera.get('puerto', 80),
-                        username=selected_camera.get('usuario', 'admin'),
-                        password=selected_camera.get('contrasena', 'admin'),
-                        multi_config=self.multi_config
-                    )
-                    
-                    self.connection_status.setText("✅ Conectado (Multi-objeto)")
-                    self.start_tracking_button.setEnabled(True)
-                    self._log("✅ Tracker multi-objeto creado exitosamente")
-                    
-                except Exception as e:
-                    self._log(f"❌ Error creando tracker multi-objeto: {e}")
-                    self.connection_status.setText("❌ Error de conexión")
-                    return
-            else:
-                # Fallback a conexión básica
-                self.connection_status.setText("⚠️ Conectado (Modo básico)")
-                self._log("⚠️ Usando modo básico - funcionalidad limitada")
-            
-            # Actualizar información de cámara
-            self.camera_info.setText(
-                f"IP: {selected_camera.get('ip', 'N/A')} | "
-                f"Puerto: {selected_camera.get('puerto', 'N/A')} | "
-                f"Usuario: {selected_camera.get('usuario', 'N/A')}"
-            )
-            
-            self.current_camera_id = selected_camera.get('id', selected_camera.get('ip', 'unknown'))
-            
+            # Esta función se puede expandir para cargar configuraciones específicas
+            self._log("📁 Configuración de cámaras cargada")
         except Exception as e:
-            self._log(f"❌ Error conectando cámara: {e}")
-            self.connection_status.setText("❌ Error de conexión")
-    
+            self._log(f"⚠️ Error cargando configuración de cámaras: {e}")
+
+    def _load_ui_configuration(self):
+        """Cargar configuración de la interfaz"""
+        try:
+            if os.path.exists(self.config_file):
+                with open(self.config_file, 'r') as f:
+                    config = json.load(f)
+                
+                # Aplicar configuración guardada
+                if 'confidence_threshold' in config:
+                    self.confidence_threshold.setValue(config['confidence_threshold'])
+                if 'switch_interval' in config:
+                    self.switch_interval.setValue(config['switch_interval'])
+                if 'tracking_mode' in config:
+                    self.tracking_mode_selector.setCurrentText(config['tracking_mode'])
+                
+                self._log("📁 Configuración de UI cargada")
+        except Exception as e:
+            self._log(f"⚠️ Error cargando configuración de UI: {e}")
+
+    def _save_ui_configuration(self):
+        """Guardar configuración de la interfaz"""
+        try:
+            config = {
+                'confidence_threshold': self.confidence_threshold.value(),
+                'switch_interval': self.switch_interval.value(),
+                'tracking_mode': self.tracking_mode_selector.currentText(),
+                'enable_alternating': self.enable_alternating.isChecked(),
+                'enable_auto_zoom': self.enable_auto_zoom.isChecked(),
+                'last_saved': datetime.now().isoformat()
+            }
+            
+            with open(self.config_file, 'w') as f:
+                json.dump(config, f, indent=4)
+                
+            self._log("💾 Configuración de UI guardada")
+        except Exception as e:
+            self._log(f"⚠️ Error guardando configuración: {e}")
+
+    def _log(self, message):
+        """Agregar mensaje al log del sistema"""
+        if hasattr(self, 'status_display'):
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            formatted_message = f"[{timestamp}] {message}"
+            self.status_display.append(formatted_message)
+            
+            if hasattr(self, 'auto_scroll_checkbox') and self.auto_scroll_checkbox.isChecked():
+                self.status_display.ensureCursorVisible()
+
     def _start_tracking(self):
-        """Iniciar seguimiento con tracker corregido"""
+        """Iniciar seguimiento PTZ multi-objeto - MÉTODO CORREGIDO"""
         try:
-            from core.ptz_tracking_fix import create_fixed_tracker
-
-            # Crear y utilizar tracker corregido basado en la cámara actual
-            if not self.current_camera_data:
-                self._log("❌ No hay datos de cámara disponibles")
-                return False
-
-            self.current_tracker = create_fixed_tracker(self.current_camera_data)
-
-            if self.current_tracker.initialize():
-                if self.current_tracker.start_tracking():
-                    self.tracking_active = True
-                    self.tracking_status.setText("▶️ Activo")
-                    self.start_tracking_button.setEnabled(False)
-                    self.stop_tracking_button.setEnabled(True)
-
-                    # Iniciar hilo de monitoreo si es posible
-                    if hasattr(self.current_tracker, 'get_status'):
-                        self.status_thread = StatusUpdateThread(self.current_tracker)
-                        self.status_thread.status_updated.connect(self._on_status_updated)
-                        self.status_thread.error_occurred.connect(self._on_tracking_error)
-                        self.status_thread.start()
-
-                    self._log("✅ Seguimiento multi-objeto iniciado (tracker corregido)")
-                    return True
-
-            self._log("❌ Error iniciando tracker corregido")
-            return False
-
+            if self.camera_selector.currentIndex() == 0:
+                QMessageBox.warning(self, "Error", "Seleccione una cámara PTZ")
+                return
+            
+            camera_data = self.camera_selector.currentData()
+            if not camera_data:
+                QMessageBox.warning(self, "Error", "Datos de cámara no válidos")
+                return
+            
+            self._log("🚀 Iniciando sistema de seguimiento PTZ...")
+            
+            # Crear y configurar tracker si está disponible
+            if MULTI_OBJECT_AVAILABLE:
+                self.current_tracker = create_multi_object_tracker(camera_data, self.multi_config)
+                if self.current_tracker:
+                    success = self.current_tracker.start_tracking()
+                    if not success:
+                        raise Exception("Error iniciando tracker")
+            
+            # Configurar UI para estado activo
+            self.tracking_active = True
+            self.session_start_time = time.time()
+            self.detection_count = 0
+            
+            self.start_btn.setEnabled(False)
+            self.stop_btn.setEnabled(True)
+            self.system_status_label.setText("🟢 Sistema Activo")
+            self.system_status_label.setStyleSheet("""
+                QLabel {
+                    font-size: 12px;
+                    padding: 5px 10px;
+                    border-radius: 15px;
+                    background-color: #1b2d1b;
+                    color: #28a745;
+                }
+            """)
+            
+            # === INICIAR HILO DE ESTADO CORREGIDO ===
+            if self.current_tracker:
+                self.status_thread = StatusUpdateThread(self.current_tracker)
+                self.status_thread.status_updated.connect(self._update_status_display)
+                self.status_thread.error_occurred.connect(self._handle_status_error)  # ← LÍNEA CORREGIDA
+                self.status_thread.start()
+                self._log("✅ Hilo de estado iniciado (versión corregida)")
+            else:
+                self._log("⚠️ No hay tracker disponible para hilo de estado")
+            
+            self._log("✅ Seguimiento PTZ multi-objeto iniciado exitosamente")
+            self.tracking_started.emit()
+            
         except Exception as e:
-            self._log(f"❌ Error: {e}")
-            return False
-    
+            self._log(f"❌ Error iniciando seguimiento: {e}")
+            self._reset_ui_to_inactive()
+            QMessageBox.critical(self, "Error", f"Error iniciando seguimiento:\n{e}")
+
     def _stop_tracking(self):
-        """Detener seguimiento"""
+        """Detener seguimiento PTZ multi-objeto - MÉTODO CORREGIDO"""
         try:
-            self._log("⏹️ Deteniendo seguimiento...")
+            self._log("🛑 Deteniendo seguimiento PTZ...")
             
-            if self.status_thread:
+            # === DETENER HILO DE ESTADO PRIMERO ===
+            if hasattr(self, 'status_thread') and self.status_thread:
                 self.status_thread.stop()
-                self.status_thread.wait(2000)
+                self.status_thread.wait(2000)  # Esperar máximo 2 segundos
                 self.status_thread = None
+                self._log("✅ Hilo de estado detenido")
             
-            if self.current_tracker and hasattr(self.current_tracker, 'stop_tracking'):
+            # Detener tracker
+            if self.current_tracker:
                 self.current_tracker.stop_tracking()
+                self.current_tracker = None
+                self._log("✅ Tracker PTZ detenido")
             
-            self.tracking_active = False
-            self.tracking_status.setText("⏹️ Detenido")
-            self.start_tracking_button.setEnabled(True)
-            self.stop_tracking_button.setEnabled(False)
+            # Resetear UI
+            self._reset_ui_to_inactive()
             
-            self._log("✅ Seguimiento detenido")
+            self._log("✅ Seguimiento PTZ detenido exitosamente")
             self.tracking_stopped.emit()
             
         except Exception as e:
             self._log(f"❌ Error deteniendo seguimiento: {e}")
-    
-    def _emergency_stop(self):
-        """Parada de emergencia"""
+            # Forzar reset de UI incluso con errores
+            self._reset_ui_to_inactive()
+
+    def _reset_ui_to_inactive(self):
+        """Resetear UI a estado inactivo"""
+        self.tracking_active = False
+        self.session_start_time = 0
+        
+        self.start_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+        self.system_status_label.setText("🔴 Sistema Inactivo")
+        self.system_status_label.setStyleSheet("""
+            QLabel {
+                font-size: 12px;
+                padding: 5px 10px;
+                border-radius: 15px;
+                background-color: #2d1b1b;
+                color: #dc3545;
+            }
+        """)
+
+    def _update_status_display(self, status):
+        """Actualizar display de estado - MÉTODO CORREGIDO"""
         try:
-            self._log("🚨 PARADA DE EMERGENCIA ACTIVADA")
-            
-            # Detener todo inmediatamente
-            if self.status_thread:
-                self.status_thread.running = False
-                self.status_thread = None
-            
-            if self.current_tracker:
-                try:
-                    if hasattr(self.current_tracker, 'stop_tracking'):
-                        self.current_tracker.stop_tracking()
-                    if hasattr(self.current_tracker, 'cleanup'):
-                        self.current_tracker.cleanup()
-                except:
-                    pass
-            
-            self.tracking_active = False
-            self.tracking_status.setText("🚨 PARADA DE EMERGENCIA")
-            self.start_tracking_button.setEnabled(True)
-            self.stop_tracking_button.setEnabled(False)
-            
-            # Resetear estado de UI
-            self.current_target.setText("Ninguno")
-            self.zoom_level.setText("50%")
-            self.pan_tilt_speed.setText("0.0, 0.0")
-            
-            self._log("🛑 Sistema detenido por emergencia")
-            
-        except Exception as e:
-            self._log(f"❌ Error crítico en parada de emergencia: {e}")
-    
-    def _test_connection(self):
-        """Probar conexión con la cámara"""
-        try:
-            if not self.current_camera_data:
-                self._log("❌ No hay cámara seleccionada para probar")
+            # === VERIFICACIÓN CRÍTICA AGREGADA ===
+            if not status or not isinstance(status, dict):
                 return
+            # === FIN DE VERIFICACIÓN ===
             
-            self._log("🔧 Probando conexión...")
+            # Actualizar campos básicos si existen en la UI
+            if hasattr(self, 'connection_status_label'):
+                connected = status.get('connected', False)
+                connection_text = "🟢 Conectado" if connected else "🔴 Desconectado"
+                self.connection_status_label.setText(connection_text)
             
-            # Simular prueba de conexión
-            camera_ip = self.current_camera_data.get('ip', '')
+            if hasattr(self, 'tracking_status_label'):
+                tracking = status.get('tracking_active', False)
+                tracking_text = "🎯 Activo" if tracking else "⏸️ Inactivo"
+                self.tracking_status_label.setText(tracking_text)
             
-            if not camera_ip:
-                self._log("❌ IP de cámara no válida")
-                return
+            if hasattr(self, 'objects_count_label'):
+                objects = status.get('active_objects', 0)
+                self.objects_count_label.setText(str(objects))
             
-            # Aquí se haría la prueba real de conexión
-            # Por ahora simulamos una prueba básica
-            self._log(f"📡 Probando conexión a {camera_ip}...")
+            if hasattr(self, 'success_rate_label'):
+                success_rate = status.get('success_rate', 0.0)
+                self.success_rate_label.setText(f"{success_rate:.1f}%")
             
-            # Simulación de prueba exitosa
-            self._log("✅ Prueba de conexión exitosa")
+            if hasattr(self, 'total_detections_label'):
+                detections = status.get('total_detections', 0)
+                self.total_detections_label.setText(str(detections))
             
-            QMessageBox.information(
-                self,
-                "Prueba de Conexión",
-                f"✅ Conexión exitosa con:\n"
-                f"IP: {camera_ip}\n"
-                f"Puerto: {self.current_camera_data.get('puerto', 80)}\n"
-                f"Usuario: {self.current_camera_data.get('usuario', 'admin')}"
-            )
+            if hasattr(self, 'moves_count_label'):
+                successful = status.get('successful_moves', 0)
+                failed = status.get('failed_moves', 0)
+                total = successful + failed
+                self.moves_count_label.setText(f"{successful}/{total}")
             
+            # Actualizar target actual si existe
+            if hasattr(self, 'current_target_label'):
+                target = status.get('current_target')
+                target_text = f"🎯 {target}" if target else "➖ Sin objetivo"
+                self.current_target_label.setText(target_text)
+            
+            # Si hay error de estado, mostrarlo
+            if 'status_error' in status:
+                self._log(f"⚠️ Estado: {status['status_error']}")
+                
         except Exception as e:
-            self._log(f"❌ Error en prueba de conexión: {e}")
-            QMessageBox.warning(
-                self,
-                "Error de Conexión",
-                f"❌ Error probando conexión:\n{e}"
-            )
-    
-    def _save_configuration(self):
-        """Guardar configuración actual"""
-        try:
-            config = {
-                'alternating_enabled': getattr(self, 'alternating_enabled', QCheckBox()).isChecked(),
-                'primary_time': getattr(self, 'primary_time', QDoubleSpinBox()).value(),
-                'secondary_time': getattr(self, 'secondary_time', QDoubleSpinBox()).value(),
-                'auto_zoom_enabled': self.auto_zoom_enabled.isChecked(),
-                'target_ratio': self.target_ratio.value(),
-                'zoom_speed': self.zoom_speed.value(),
-                'confidence_weight': self.confidence_weight.value(),
-                'movement_weight': self.movement_weight.value(),
-                'size_weight': self.size_weight.value(),
-                'max_objects': self.max_objects.value(),
-                'confidence_threshold': self.confidence_threshold.value(),
-                'saved_timestamp': datetime.now().isoformat()
+            self._log(f"❌ Error crítico procesando estado: {e}")
+
+    def _handle_status_error(self, error_message):
+        """Manejar errores del hilo de estado - MÉTODO AGREGADO"""
+        self._log(f"⚠️ Error en hilo de estado: {error_message}")
+        
+        # Si hay demasiados errores, detener tracking
+        if "Demasiados errores" in error_message or "máximo" in error_message.lower():
+            self._log("🛑 Deteniendo seguimiento por errores críticos en hilo de estado")
+            self._stop_tracking()
+
+    def _update_ui_displays(self):
+        """Actualizar displays de la UI cada segundo"""
+        if self.tracking_active and self.session_start_time > 0:
+            # Calcular tiempo de sesión
+            elapsed = time.time() - self.session_start_time
+            hours = int(elapsed // 3600)
+            minutes = int((elapsed % 3600) // 60)
+            seconds = int(elapsed % 60)
+            time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+            
+            if hasattr(self, 'tracking_time_label'):
+                self.tracking_time_label.setText(f"⏱️ {time_str}")
+            if hasattr(self, 'session_time_label'):
+                self.session_time_label.setText(time_str)
+
+    def _on_camera_changed(self, index):
+        """Manejar cambio de cámara seleccionada"""
+        if index > 0:  # Ignorar "Seleccionar cámara..."
+            camera_data = self.camera_selector.currentData()
+            self.current_camera_data = camera_data
+            self.current_camera_id = camera_data.get('id') if camera_data else None
+            
+            camera_name = camera_data.get('nombre', camera_data.get('ip', 'Sin nombre'))
+            self._log(f"📹 Cámara seleccionada: {camera_name}")
+            
+            if hasattr(self, 'camera_status_label'):
+                self.camera_status_label.setText(f"📷 {camera_name}")
+
+    def _on_mode_changed(self, mode_text):
+        """Manejar cambio de modo de seguimiento"""
+        if MULTI_OBJECT_AVAILABLE and self.multi_config:
+            mode_map = {
+                "Objeto Individual": TrackingMode.SINGLE_OBJECT,
+                "Multi-Objeto Alternante": TrackingMode.MULTI_OBJECT_ALTERNATING,
+                "Basado en Prioridad": TrackingMode.MULTI_OBJECT_PRIORITY,
+                "Cambio Automático": TrackingMode.AUTO_SWITCH
             }
             
-            with open(self.config_file, 'w') as f:
-                json.dump(config, f, indent=2)
-            
-            self._log("💾 Configuración guardada exitosamente")
-            
-            QMessageBox.information(
-                self,
-                "Configuración Guardada",
-                "✅ La configuración se guardó correctamente."
-            )
-            
-        except Exception as e:
-            self._log(f"❌ Error guardando configuración: {e}")
-            QMessageBox.warning(
-                self,
-                "Error",
-                f"❌ Error guardando configuración:\n{e}"
-            )
-    
-    def _load_configuration(self):
-        """Cargar configuración guardada"""
-        try:
-            if not os.path.exists(self.config_file):
-                self._log("ℹ️ No hay configuración guardada, usando valores por defecto")
-                return
-            
-            with open(self.config_file, 'r') as f:
-                config = json.load(f)
-            
-            # Aplicar configuración a la UI
-            if hasattr(self, 'alternating_enabled'):
-                self.alternating_enabled.setChecked(config.get('alternating_enabled', True))
-            if hasattr(self, 'primary_time'):
-                self.primary_time.setValue(config.get('primary_time', 5.0))
-            if hasattr(self, 'secondary_time'):
-                self.secondary_time.setValue(config.get('secondary_time', 3.0))
-            
-            self.auto_zoom_enabled.setChecked(config.get('auto_zoom_enabled', True))
-            self.target_ratio.setValue(config.get('target_ratio', 0.25))
-            self.zoom_speed.setValue(config.get('zoom_speed', 3))
-            self.confidence_weight.setValue(config.get('confidence_weight', 40))
-            self.movement_weight.setValue(config.get('movement_weight', 30))
-            self.size_weight.setValue(config.get('size_weight', 20))
-            self.max_objects.setValue(config.get('max_objects', 3))
-            self.confidence_threshold.setValue(config.get('confidence_threshold', 0.5))
-            
-            # Actualizar configuración del tracker
-            if MULTI_OBJECT_AVAILABLE and hasattr(self, 'multi_config'):
-                self.multi_config.alternating_enabled = config.get('alternating_enabled', True)
-                self.multi_config.primary_follow_time = config.get('primary_time', 5.0)
-                self.multi_config.secondary_follow_time = config.get('secondary_time', 3.0)
-                self.multi_config.auto_zoom_enabled = config.get('auto_zoom_enabled', True)
-                self.multi_config.target_object_ratio = config.get('target_ratio', 0.25)
-                self.multi_config.zoom_speed = config.get('zoom_speed', 3) / 10.0
-                self.multi_config.confidence_weight = config.get('confidence_weight', 40) / 100.0
-                self.multi_config.movement_weight = config.get('movement_weight', 30) / 100.0
-                self.multi_config.size_weight = config.get('size_weight', 20) / 100.0
-                self.multi_config.max_objects_to_track = config.get('max_objects', 3)
-                self.multi_config.min_confidence_threshold = config.get('confidence_threshold', 0.5)
-            
-            self._log("📁 Configuración cargada exitosamente")
-            
-        except Exception as e:
-            self._log(f"❌ Error cargando configuración: {e}")
-    
-    def _reset_configuration(self):
-        """Resetear configuración a valores por defecto"""
-        try:
-            reply = QMessageBox.question(
-                self,
-                "Resetear Configuración",
-                "¿Está seguro de que desea resetear la configuración a los valores por defecto?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            )
-            
-            if reply == QMessageBox.StandardButton.Yes:
-                # Resetear controles UI
-                if hasattr(self, 'alternating_enabled'):
-                    self.alternating_enabled.setChecked(True)
-                if hasattr(self, 'primary_time'):
-                    self.primary_time.setValue(5.0)
-                if hasattr(self, 'secondary_time'):
-                    self.secondary_time.setValue(3.0)
-                
-                self.auto_zoom_enabled.setChecked(True)
-                self.target_ratio.setValue(0.25)
-                self.zoom_speed.setValue(3)
-                self.confidence_weight.setValue(40)
-                self.movement_weight.setValue(30)
-                self.size_weight.setValue(20)
-                self.max_objects.setValue(3)
-                self.confidence_threshold.setValue(0.5)
-                
-                # Resetear configuración del tracker
-                if MULTI_OBJECT_AVAILABLE:
-                    self.multi_config = MultiObjectConfig()
-                
-                self._log("🔄 Configuración reseteada a valores por defecto")
-                
-        except Exception as e:
-            self._log(f"❌ Error reseteando configuración: {e}")
-    
-    def _export_statistics(self):
-        """Exportar estadísticas a archivo"""
-        try:
-            filename, _ = QFileDialog.getSaveFileName(
-                self,
-                "Exportar Estadísticas",
-                f"estadisticas_ptz_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                "JSON Files (*.json);;All Files (*)"
-            )
-            
-            if filename:
-                stats = {
-                    'timestamp': datetime.now().isoformat(),
-                    'session_duration': self.session_duration.text(),
-                    'successful_tracks': self.successful_tracks.text(),
-                    'failed_tracks': self.failed_tracks.text(),
-                    'switch_count': self.switch_count.text(),
-                    'zoom_changes': self.zoom_changes.text(),
-                    'camera_info': {
-                        'ip': self.current_camera_data.get('ip', 'N/A') if self.current_camera_data else 'N/A',
-                        'name': self.current_camera_data.get('nombre', 'N/A') if self.current_camera_data else 'N/A'
-                    }
-                }
-                
-                with open(filename, 'w') as f:
-                    json.dump(stats, f, indent=2)
-                
-                self._log(f"📤 Estadísticas exportadas a: {filename}")
-                QMessageBox.information(
-                    self,
-                    "Exportación Exitosa",
-                    f"✅ Estadísticas exportadas a:\n{filename}"
-                )
-            
-        except Exception as e:
-            self._log(f"❌ Error exportando estadísticas: {e}")
-            QMessageBox.warning(
-                self,
-                "Error de Exportación",
-                f"❌ Error exportando estadísticas:\n{e}"
-            )
-    
-    def _reset_statistics(self):
-        """Resetear estadísticas"""
-        try:
-            reply = QMessageBox.question(
-                self,
-                "Resetear Estadísticas",
-                "¿Está seguro de que desea resetear todas las estadísticas?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            )
-            
-            if reply == QMessageBox.StandardButton.Yes:
-                self.session_duration.setText("0:00:00")
-                self.successful_tracks.setText("0")
-                self.failed_tracks.setText("0")
-                self.switch_count.setText("0")
-                self.zoom_changes.setText("0")
-                self.detection_count.setText("0")
-                
-                self._log("🔄 Estadísticas reseteadas")
-            
-        except Exception as e:
-            self._log(f"❌ Error reseteando estadísticas: {e}")
-    
-    def _show_help(self):
-        """Mostrar ayuda"""
-        help_text = """
-🎯 **Sistema PTZ Multi-Objeto - Ayuda**
+            if mode_text in mode_map:
+                self.multi_config.tracking_mode = mode_map[mode_text]
+                self._log(f"🎯 Modo de seguimiento: {mode_text}")
 
-**Funcionalidades principales:**
-• Seguimiento automático de múltiples objetos
-• Alternancia inteligente entre objetivos
-• Zoom automático adaptativo
-• Configuración de prioridades
+    def _on_config_changed(self):
+        """Manejar cambios en configuración"""
+        if MULTI_OBJECT_AVAILABLE and self.multi_config:
+            # Actualizar configuración del sistema
+            self.multi_config.min_confidence_threshold = self.confidence_threshold.value()
+            self.multi_config.primary_follow_time = self.switch_interval.value()
+            self.multi_config.alternating_enabled = self.enable_alternating.isChecked()
+            
+            # Actualizar pesos de prioridad
+            self.multi_config.confidence_weight = self.confidence_weight.value()
+            self.multi_config.movement_weight = self.movement_weight.value()
+            self.multi_config.size_weight = self.size_weight.value()
+            self.multi_config.proximity_weight = self.proximity_weight.value()
+            
+            self._log("⚙️ Configuración actualizada")
 
-**Cómo usar:**
-1. Seleccione una cámara PTZ
-2. Haga clic en "Conectar"
-3. Configure los parámetros en la pestaña "Configuración"
-4. Inicie el seguimiento con "Iniciar Seguimiento"
+    def _show_error_dialog(self):
+        """Mostrar diálogo de error cuando no hay sistemas disponibles"""
+        error_msg = """
+❌ Sistema PTZ Multi-Objeto No Disponible
 
-**Configuración:**
-• **Alternancia**: Tiempo que sigue cada objetivo
-• **Zoom**: Ratio objetivo del objeto en la imagen
-• **Prioridades**: Pesos para selección de objetivos
+Los módulos requeridos no están disponibles:
 
-**Monitoreo:**
-• Vea objetos detectados en tiempo real
-• Monitore estado del sistema
-• Revise estadísticas de rendimiento
+• core/multi_object_ptz_system.py
+• core/ptz_tracking_integration_enhanced.py
+• core/ptz_control.py
 
-**Soporte:**
-Para soporte técnico, revise los logs del sistema
-y verifique la configuración de red de las cámaras.
+Por favor, verifique la instalación de los módulos PTZ.
         """
         
-        QMessageBox.information(
-            self,
-            "Ayuda - Sistema PTZ Multi-Objeto",
-            help_text
-        )
-    
-    def _update_status_display(self):
-        """Actualizar display de estado"""
-        try:
-            current_time = datetime.now().strftime("%H:%M:%S")
-            
-            status_lines = [
-                f"🕒 {current_time}",
-                f"📹 Cámara: {self.camera_selector.currentText()[:30]}",
-                f"🎯 Estado: {self.tracking_status.text()}",
-                f"🔍 Detecciones: {self.detection_count.text()}",
-                f"🎛️ Sistemas: Multi={MULTI_OBJECT_AVAILABLE}, Int={INTEGRATION_AVAILABLE}, PTZ={BASIC_PTZ_AVAILABLE}"
-            ]
-            
-            self.status_display.clear()
-            for line in status_lines:
-                self.status_display.append(line)
-            
-        except Exception as e:
-            print(f"Error actualizando estado: {e}")
-    
-    def _update_ui_state(self):
-        """Actualizar estado de la UI"""
-        try:
-            # Habilitar/deshabilitar controles según disponibilidad
-            has_camera = self.current_camera_data is not None
-            is_tracking = self.tracking_active
-            
-            self.connect_button.setEnabled(not is_tracking)
-            self.start_tracking_button.setEnabled(has_camera and not is_tracking)
-            self.stop_tracking_button.setEnabled(is_tracking)
-            self.test_connection_button.setEnabled(has_camera and not is_tracking)
-            
-        except Exception as e:
-            print(f"Error actualizando UI: {e}")
-    
-    def _on_status_updated(self, status):
-        """Manejar actualización de estado del tracker"""
-        try:
-            if 'current_target' in status:
-                target_info = status['current_target']
-                target_id = target_info.get('id', 'Ninguno')
-                self.current_target.setText(str(target_id))
-            
-            if 'zoom' in status:
-                zoom_info = status['zoom']
-                zoom_level = zoom_info.get('current_level', 0.5) * 100
-                self.zoom_level.setText(f"{zoom_level:.1f}%")
-            
-            if 'movement' in status:
-                movement_info = status['movement']
-                pan_speed = movement_info.get('pan_speed', 0.0)
-                tilt_speed = movement_info.get('tilt_speed', 0.0)
-                self.pan_tilt_speed.setText(f"{pan_speed:.2f}, {tilt_speed:.2f}")
-            
-            if 'statistics' in status:
-                stats = status['statistics']
-                self.detection_count.setText(str(stats.get('total_detections', 0)))
-                self.switch_count.setText(str(stats.get('switch_count', 0)))
-                self.zoom_changes.setText(str(stats.get('zoom_changes', 0)))
-                
-                # Actualizar duración de sesión
-                duration = stats.get('session_duration', 0)
-                hours = int(duration // 3600)
-                minutes = int((duration % 3600) // 60)
-                seconds = int(duration % 60)
-                self.session_duration.setText(f"{hours:02d}:{minutes:02d}:{seconds:02d}")
-            
-            # Actualizar tabla de objetos si hay información
-            if 'objects' in status:
-                self._update_objects_table(status['objects'])
-            
-        except Exception as e:
-            self._log(f"❌ Error procesando actualización de estado: {e}")
-    
-    def _update_objects_table(self, objects_info):
-        """Actualizar tabla de objetos detectados"""
-        try:
-            self.objects_table.setRowCount(len(objects_info))
-            
-            for row, (obj_id, obj_data) in enumerate(objects_info.items()):
-                # ID del objeto
-                self.objects_table.setItem(row, 0, QTableWidgetItem(str(obj_id)))
-                
-                # Posición
-                pos = obj_data.get('position', {})
-                pos_text = f"({pos.get('cx', 0):.3f}, {pos.get('cy', 0):.3f})"
-                self.objects_table.setItem(row, 1, QTableWidgetItem(pos_text))
-                
-                # Tamaño
-                size_text = f"{pos.get('width', 0):.3f}×{pos.get('height', 0):.3f}"
-                self.objects_table.setItem(row, 2, QTableWidgetItem(size_text))
-                
-                # Confianza
-                confidence = obj_data.get('confidence', 0.0)
-                self.objects_table.setItem(row, 3, QTableWidgetItem(f"{confidence:.3f}"))
-                
-                # Estado
-                status_text = "Primario" if obj_data.get('is_primary', False) else "Secundario"
-                if obj_data.get('is_moving', False):
-                    status_text += " (Mov.)"
-                self.objects_table.setItem(row, 4, QTableWidgetItem(status_text))
-                
-                # Tiempo rastreado
-                time_tracked = obj_data.get('time_tracked', 0.0)
-                self.objects_table.setItem(row, 5, QTableWidgetItem(f"{time_tracked:.1f}s"))
-            
-        except Exception as e:
-            self._log(f"❌ Error actualizando tabla de objetos: {e}")
-    
-    def _on_tracking_error(self, error_msg):
-        """Manejar errores del sistema de seguimiento"""
-        self._log(f"🚨 Error de seguimiento: {error_msg}")
-        
-        # Detener seguimiento en caso de error crítico
-        if "crítico" in error_msg.lower() or "critical" in error_msg.lower():
-            self._emergency_stop()
-    
-    def _log(self, message):
-        """Agregar mensaje al log"""
-        try:
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            log_message = f"[{timestamp}] {message}"
-            
-            self.log_display.append(log_message)
-            
-            # Auto-scroll si está habilitado
-            if self.auto_scroll_checkbox.isChecked():
-                scrollbar = self.log_display.verticalScrollBar()
-                scrollbar.setValue(scrollbar.maximum())
-            
-            # También imprimir en consola
-            print(log_message)
-            
-        except Exception as e:
-            print(f"Error en log: {e}")
-    
-    def closeEvent(self, event):
-        """Manejar cierre del diálogo"""
-        try:
-            if self.tracking_active:
-                reply = QMessageBox.question(
-                    self,
-                    "Seguimiento Activo",
-                    "El seguimiento está activo. ¿Desea detenerlo y cerrar?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-                )
-                
-                if reply == QMessageBox.StandardButton.No:
-                    event.ignore()
-                    return
-            
-            # Detener seguimiento si está activo
-            if self.tracking_active:
-                self._stop_tracking()
-            
-            # Detener hilo de estado
-            if self.status_thread:
-                self.status_thread.stop()
-                self.status_thread.wait(2000)
-            
-            # Limpiar tracker
-            if self.current_tracker and hasattr(self.current_tracker, 'cleanup'):
-                self.current_tracker.cleanup()
-            
-            # Guardar configuración
-            self._save_configuration()
-            
-            self._log("👋 Cerrando sistema PTZ multi-objeto")
-            event.accept()
-            
-        except Exception as e:
-            print(f"Error cerrando diálogo: {e}")
-            event.accept()
+        QMessageBox.critical(self, "Error del Sistema", error_msg.strip())
+        self.close()
 
-class PTZDetectionBridge:
-    """Puente para integrar detecciones con el sistema PTZ"""
-    
-    def __init__(self, ptz_system=None):
-        self.ptz_system = ptz_system
-        self.active_cameras = {}
-        self.detection_count = 0
+    def update_detections(self, detections, frame_size):
+        """Método público para recibir detecciones del sistema principal"""
+        if not self.tracking_active or not self.current_tracker:
+            return
         
-    def register_camera(self, camera_id: str, camera_data: dict) -> bool:
-        """Registrar cámara en el puente"""
         try:
-            self.active_cameras[camera_id] = {
-                'data': camera_data,
-                'last_detection': 0,
-                'total_detections': 0
-            }
-            print(f"📡 Cámara {camera_id} registrada en puente PTZ")
-            return True
-        except Exception as e:
-            print(f"❌ Error registrando cámara {camera_id}: {e}")
-            return False
-    
-    def send_detections(self, camera_id: str, detections) -> bool:
-        """Enviar detecciones al sistema PTZ"""
-        try:
-            if camera_id not in self.active_cameras:
-                print(f"⚠️ Cámara {camera_id} no registrada en puente PTZ")
-                return False
+            # Actualizar contador
+            self.detection_count += len(detections)
             
-            if self.ptz_system and INTEGRATION_AVAILABLE:
-                # Convertir detecciones a formato esperado
-                if hasattr(detections, 'boxes'):
-                    # Formato YOLOv8
-                    success = self.ptz_system.process_ptz_yolo_results(camera_id, detections)
-                elif isinstance(detections, list):
-                    # Lista de detecciones
-                    success = self.ptz_system.update_ptz_detections(camera_id, detections)
-                else:
-                    return False
-                
+            if hasattr(self, 'detection_count_label'):
+                self.detection_count_label.setText(f"🎯 {self.detection_count} detecciones")
+            
+            # Enviar detecciones al tracker
+            if hasattr(self.current_tracker, 'update_multi_object_tracking'):
+                success = self.current_tracker.update_multi_object_tracking(detections, frame_size)
                 if success:
-                    self.detection_count += 1
-                    self.active_cameras[camera_id]['total_detections'] += 1
-                    self.active_cameras[camera_id]['last_detection'] = time.time()
+                    self._log(f"✅ Actualización de seguimiento exitosa ({len(detections)} objetos)")
+                else:
+                    self._log(f"⚠️ Fallo en actualización de seguimiento")
+            else:
+                self._log("⚠️ Tracker no tiene método update_multi_object_tracking")
                 
-                return success
-            return False
-            
         except Exception as e:
-            print(f"❌ Error enviando detecciones PTZ para {camera_id}: {e}")
-            return False
-    
-    def get_status(self, camera_id: str = None):
-        """Obtener estado del sistema PTZ"""
-        try:
-            if self.ptz_system and INTEGRATION_AVAILABLE:
-                return self.ptz_system.get_ptz_status(camera_id)
-            
-            # Estado básico
-            return {
-                'active_cameras': len(self.active_cameras),
-                'total_detections': self.detection_count,
-                'system_available': INTEGRATION_AVAILABLE or MULTI_OBJECT_AVAILABLE
-            }
-        except Exception as e:
-            return {'error': str(e)}
-    
-    def cleanup(self):
-        """Limpiar recursos del puente"""
-        try:
-            if self.ptz_system:
-                for camera_id in list(self.active_cameras.keys()):
-                    if hasattr(self.ptz_system, 'stop_ptz_session'):
-                        self.ptz_system.stop_ptz_session(camera_id)
-                self.active_cameras.clear()
-                print("🧹 Puente PTZ limpiado")
-        except Exception as e:
-            print(f"❌ Error limpiando puente PTZ: {e}")
+            self._log(f"❌ Error procesando detecciones: {e}")
 
-# ===== FUNCIÓN PRINCIPAL PARA MAIN_WINDOW.PY =====
-
+# Función de creación del sistema completo
 def create_multi_object_ptz_system(camera_list, parent=None):
-    """
-    Crear y mostrar el sistema PTZ multi-objeto
-    Esta función es llamada desde main_window.py
-    
-    Returns:
-        tuple: (dialog, bridge) donde:
-            - dialog: Instancia del diálogo PTZ
-            - bridge: Puente para integración con detecciones (puede ser None)
-    """
+    """Crear sistema PTZ multi-objeto completo con bridge de integración"""
     try:
-        print("🚀 Creando sistema PTZ multi-objeto...")
-        
-        # Verificar disponibilidad mínima
-        if not MULTI_OBJECT_AVAILABLE and not INTEGRATION_AVAILABLE and not BASIC_PTZ_AVAILABLE:
-            QMessageBox.critical(
-                parent,
-                "Sistema No Disponible",
-                "❌ El sistema PTZ multi-objeto no está disponible.\n\n"
-                "Archivos requeridos:\n"
-                "• core/multi_object_ptz_system.py\n"
-                "• core/ptz_tracking_integration_enhanced.py\n"
-                "• core/ptz_control.py\n\n"
-                "Dependencias:\n"
-                "• pip install onvif-zeep numpy\n\n"
-                "Verifique la instalación y reinicie la aplicación."
-            )
-            return None, None
-        
-        # Filtrar solo cámaras PTZ
-        ptz_cameras = [cam for cam in camera_list if cam.get('tipo') == 'ptz']
-        
-        if not ptz_cameras:
-            QMessageBox.warning(
-                parent,
-                "Sin cámaras PTZ",
-                "❌ No se encontraron cámaras PTZ configuradas.\n\n"
-                "Para usar el seguimiento multi-objeto:\n"
-                "1. Agregue al menos una cámara con tipo 'ptz'\n"
-                "2. Asegúrese de que las credenciales sean correctas\n"
-                "3. Verifique la conexión de red\n\n"
-                "Use 'Configuración → Cámaras' para agregar cámaras PTZ."
-            )
-            return None, None
-        
-        print(f"📹 {len(ptz_cameras)} cámaras PTZ encontradas")
-        
         # Crear diálogo principal
-        dialog = EnhancedMultiObjectPTZDialog(parent, ptz_cameras)
+        dialog = EnhancedMultiObjectPTZDialog(parent, camera_list)
         
-        # Crear puente de integración si está disponible
-        bridge = None
-        if INTEGRATION_AVAILABLE or MULTI_OBJECT_AVAILABLE:
-            try:
-                bridge = PTZDetectionBridge()
+        # Crear bridge de integración (clase simple para conectar con el sistema principal)
+        class PTZDetectionBridge:
+            def __init__(self, dialog):
+                self.dialog = dialog
                 
-                # Registrar cámaras PTZ
-                registered_count = 0
-                for camera in ptz_cameras:
-                    camera_id = camera.get('id', camera.get('ip', 'unknown'))
-                    if bridge.register_camera(camera_id, camera):
-                        registered_count += 1
-                
-                print(f"🌉 Puente PTZ creado con {registered_count} cámaras registradas")
-                
-            except Exception as e:
-                print(f"⚠️ Error creando puente de integración: {e}")
-                bridge = None
+            def send_detections(self, detections, frame_size=(1920, 1080)):
+                """Enviar detecciones al sistema PTZ"""
+                if self.dialog and self.dialog.tracking_active:
+                    self.dialog.update_detections(detections, frame_size)
         
-        print("✅ Sistema PTZ multi-objeto creado exitosamente")
+        bridge = PTZDetectionBridge(dialog)
+        
         return dialog, bridge
         
     except Exception as e:
-        QMessageBox.critical(
-            parent,
-            "Error Crítico",
-            f"❌ Error crítico creando sistema PTZ multi-objeto:\n\n{e}\n\n"
-            f"Verifique:\n"
-            f"• Que todos los archivos estén presentes\n"
-            f"• Que las dependencias estén instaladas\n"
-            f"• La consola para más detalles"
-        )
-        print(f"ERROR CRÍTICO en create_multi_object_ptz_system: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"❌ Error creando sistema PTZ multi-objeto: {e}")
         return None, None
 
-# ===== FUNCIÓN ALTERNATIVA PARA CREAR SOLO EL PUENTE =====
-
-def create_ptz_detection_bridge(camera_list):
-    """
-    Crear solo el puente de detecciones sin interfaz gráfica
-    Útil para integración automática con el sistema de detección
-    """
-    try:
-        if not INTEGRATION_AVAILABLE and not MULTI_OBJECT_AVAILABLE:
-            print("⚠️ Sistema de integración PTZ no disponible")
-            return None
-        
-        bridge = PTZDetectionBridge()
-        
-        # Registrar cámaras PTZ automáticamente
-        ptz_cameras = [cam for cam in camera_list if cam.get('tipo') == 'ptz']
-        registered_count = 0
-        
-        for camera in ptz_cameras:
-            camera_id = camera.get('id', camera.get('ip', 'unknown'))
-            if bridge.register_camera(camera_id, camera):
-                registered_count += 1
-        
-        print(f"🎯 Puente PTZ creado con {registered_count} cámaras registradas")
-        return bridge if registered_count > 0 else None
-        
-    except Exception as e:
-        print(f"❌ Error creando puente PTZ: {e}")
-        return None
-
-# ===== PUNTO DE ENTRADA PARA TESTING =====
-
 if __name__ == "__main__":
-    import sys
-    from PyQt6.QtWidgets import QApplication
+    # Ejecutar diálogo de forma independiente para pruebas
+    app = QApplication(sys.argv)
     
-    def test_ptz_dialog():
-        """Función de testing del diálogo PTZ"""
-        app = QApplication(sys.argv)
-        
-        # Crear datos de prueba
-        test_cameras = [
-            {
-                'id': 'ptz1',
-                'nombre': 'PTZ Cámara 1',
-                'ip': '192.168.1.100',
-                'puerto': 80,
-                'usuario': 'admin',
-                'contrasena': 'admin123',
-                'tipo': 'ptz'
-            },
-            {
-                'id': 'ptz2', 
-                'nombre': 'PTZ Cámara 2',
-                'ip': '192.168.1.101',
-                'puerto': 80,
-                'usuario': 'admin',
-                'contrasena': 'admin123',
-                'tipo': 'ptz'
-            }
-        ]
-        
-        # Crear y mostrar diálogo
-        dialog = EnhancedMultiObjectPTZDialog(None, test_cameras)
+    # Datos de cámaras de prueba
+    test_cameras = [
+        {
+            'ip': '192.168.1.100',
+            'tipo': 'ptz',
+            'nombre': 'PTZ Cámara 1',
+            'usuario': 'admin',
+            'contrasena': 'admin123'
+        },
+        {
+            'ip': '192.168.1.101',
+            'tipo': 'ptz',
+            'nombre': 'PTZ Cámara 2',
+            'usuario': 'admin',
+            'contrasena': 'admin123'
+        }
+    ]
+    
+    dialog, bridge = create_multi_object_ptz_system(test_cameras)
+    
+    if dialog:
         dialog.show()
         
-        print("🧪 Diálogo PTZ de prueba iniciado")
-        print(f"📊 Estado de sistemas:")
-        print(f"   - Multi-objeto: {'✅' if MULTI_OBJECT_AVAILABLE else '❌'}")
-        print(f"   - Integración: {'✅' if INTEGRATION_AVAILABLE else '❌'}")
-        print(f"   - PTZ Básico: {'✅' if BASIC_PTZ_AVAILABLE else '❌'}")
+        # Simular detecciones de prueba cada 2 segundos
+        def simulate_detections():
+            import random
+            detections = []
+            for i in range(random.randint(1, 3)):
+                detection = {
+                    'bbox': [
+                        random.randint(100, 800),
+                        random.randint(100, 600),
+                        random.randint(900, 1200),
+                        random.randint(700, 900)
+                    ],
+                    'confidence': random.uniform(0.6, 0.95),
+                    'class': random.choice(['person', 'boat', 'vehicle'])
+                }
+                detections.append(detection)
+            
+            if bridge:
+                bridge.send_detections(detections)
+        
+        # Timer para simulación
+        timer = QTimer()
+        timer.timeout.connect(simulate_detections)
+        timer.start(2000)  # Cada 2 segundos
         
         sys.exit(app.exec())
-    
-    test_ptz_dialog()
+    else:
+        print("❌ No se pudo crear el diálogo PTZ")
