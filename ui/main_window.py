@@ -1,5 +1,3 @@
-# ui/main_window.py - VERSIÓN COMPLETA CON MUESTREO ADAPTATIVO INTEGRADO
-
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QListWidget,
     QTextEdit, QMenuBar, QMenu, QGridLayout, QStackedWidget, QLabel,
@@ -51,6 +49,9 @@ class MainGUI(QMainWindow):
 
         self.camera_data_list = []
         self.camera_widgets = [] 
+        
+        # NUEVO: Bridge PTZ para detecciones
+        self.ptz_detection_bridge = None
 
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
@@ -95,27 +96,8 @@ class MainGUI(QMainWindow):
         self.action_edit_line.triggered.connect(self.toggle_line_edit)
         self.menu_config.addAction(self.action_edit_line)
 
-        # Menú PTZ mejorado
-        self.action_ptz_tracking = QAction("🎮 Seguimiento Básico", self)
-        self.action_ptz_tracking.triggered.connect(self.open_ptz_dialog)
-        self.menu_ptz.addAction(self.action_ptz_tracking)
-
-        # NUEVA FUNCIONALIDAD: Gestión Avanzada PTZ
-        self.action_ptz_presets = QAction("🎯 Gestión Avanzada PTZ", self)
-        self.action_ptz_presets.triggered.connect(self.open_ptz_presets_dialog)
-        self.menu_ptz.addAction(self.action_ptz_presets)
-
-        # Separador en el menú PTZ
-        self.menu_ptz.addSeparator()
-
-        # Acciones adicionales PTZ
-        self.action_ptz_init = QAction("🔧 Inicializar Sistema PTZ", self)
-        self.action_ptz_init.triggered.connect(self.initialize_ptz_system)
-        self.menu_ptz.addAction(self.action_ptz_init)
-
-        self.action_ptz_stop_all = QAction("⏹️ Detener Todas las PTZ", self)
-        self.action_ptz_stop_all.triggered.connect(self.stop_all_ptz)
-        self.menu_ptz.addAction(self.action_ptz_stop_all)
+        # ✅ MENÚ PTZ CORREGIDO Y COMPLETO
+        self._setup_ptz_menu()
 
         self.stacked_widget = QStackedWidget()
         self.main_layout.addWidget(self.stacked_widget)
@@ -134,6 +116,183 @@ class MainGUI(QMainWindow):
         self.add_adaptive_sampling_menu_items()
 
         cargar_camaras_guardadas(self)
+
+    def _setup_ptz_menu(self):
+        """✅ NUEVO: Configurar menú PTZ completo"""
+        # Menú PTZ Básico
+        self.action_ptz_tracking = QAction("🎮 Seguimiento Básico", self)
+        self.action_ptz_tracking.triggered.connect(self.open_ptz_dialog)
+        self.menu_ptz.addAction(self.action_ptz_tracking)
+
+        # Gestión Avanzada PTZ
+        self.action_ptz_presets = QAction("🎯 Gestión Avanzada PTZ", self)
+        self.action_ptz_presets.triggered.connect(self.open_ptz_presets_dialog)
+        self.menu_ptz.addAction(self.action_ptz_presets)
+
+        # ✅ NUEVO: PTZ Multi-Objeto (CORREGIDO)
+        self.action_ptz_multi_object = QAction("🚀 Seguimiento Multi-Objeto", self)
+        self.action_ptz_multi_object.triggered.connect(self.open_ptz_multi_object_dialog)
+        self.menu_ptz.addAction(self.action_ptz_multi_object)
+
+        # Separador en el menú PTZ
+        self.menu_ptz.addSeparator()
+
+        # Acciones adicionales PTZ
+        self.action_ptz_init = QAction("🔧 Inicializar Sistema PTZ", self)
+        self.action_ptz_init.triggered.connect(self.initialize_ptz_system)
+        self.menu_ptz.addAction(self.action_ptz_init)
+
+        self.action_ptz_stop_all = QAction("⏹️ Detener Todas las PTZ", self)
+        self.action_ptz_stop_all.triggered.connect(self.stop_all_ptz)
+        self.menu_ptz.addAction(self.action_ptz_stop_all)
+
+    def abrir_configuracion_modal(self):
+        """Abrir modal de configuración - MÉTODO CORREGIDO"""
+        try:
+            dialog = ConfiguracionDialog(self, camera_list=self.camera_data_list)
+            if dialog.exec():
+                guardar_camaras(self)
+                self.append_debug("⚙️ Configuración del sistema guardada.")
+            else:
+                self.append_debug("⚙️ Cambios en configuración del sistema cancelados.")
+        except ImportError as e:
+            self.append_debug(f"❌ Error: No se pudo cargar el diálogo de configuración: {e}")
+            QMessageBox.warning(
+                self,
+                "Módulo no disponible",
+                f"❌ No se pudo cargar el diálogo de configuración:\n{e}\n\n"
+                f"Archivo requerido:\n"
+                f"• ui/config_modal.py"
+            )
+        except Exception as e:
+            self.append_debug(f"❌ Error inesperado abriendo configuración: {e}")
+
+    # ✅ NUEVO: Método PTZ Multi-Objeto CORREGIDO
+    def open_ptz_multi_object_dialog(self):
+        """Abrir sistema PTZ multi-objeto CORREGIDO"""
+        try:
+            from ui.enhanced_ptz_multi_object_dialog import create_multi_object_ptz_system
+            
+            # Verificar que hay cámaras PTZ disponibles
+            ptz_cameras = [cam for cam in self.camera_data_list if cam.get('tipo') == 'ptz']
+            
+            if not ptz_cameras:
+                QMessageBox.warning(
+                    self,
+                    "Sin cámaras PTZ",
+                    "❌ No se encontraron cámaras PTZ configuradas.\n\n"
+                    "Para usar el seguimiento multi-objeto:\n"
+                    "1. Agregue al menos una cámara con tipo 'ptz'\n"
+                    "2. Asegúrese de que las credenciales sean correctas"
+                )
+                self.append_debug("⚠️ No hay cámaras PTZ para seguimiento multi-objeto")
+                return
+            
+            # Crear sistema PTZ multi-objeto
+            dialog, bridge = create_multi_object_ptz_system(self.camera_data_list, self)
+            
+            if dialog and bridge:
+                # Guardar referencia al bridge para uso externo
+                self.ptz_detection_bridge = bridge
+                
+                # Mostrar diálogo
+                dialog.show()
+                
+                self.append_debug("🎯 Sistema PTZ Multi-Objeto iniciado exitosamente")
+                self.append_debug(f"📹 {len(ptz_cameras)} cámaras PTZ disponibles para seguimiento")
+                
+                # Mostrar información sobre integración
+                QMessageBox.information(
+                    self,
+                    "PTZ Multi-Objeto Iniciado",
+                    "✅ Sistema PTZ Multi-Objeto iniciado exitosamente.\n\n"
+                    "🎯 Funcionalidades disponibles:\n"
+                    "• Seguimiento de múltiples objetos con alternancia\n"
+                    "• Zoom automático inteligente\n"
+                    "• Configuración de prioridades\n"
+                    "• Análisis en tiempo real\n\n"
+                    "💡 Las detecciones se enviarán automáticamente al sistema PTZ\n"
+                    "cuando esté activo el seguimiento."
+                )
+                
+            else:
+                self.append_debug("❌ Error creando sistema PTZ multi-objeto")
+                QMessageBox.critical(
+                    self,
+                    "Error",
+                    "❌ No se pudo crear el sistema PTZ multi-objeto.\n\n"
+                    "Verifique que los archivos estén presentes:\n"
+                    "• ui/enhanced_ptz_multi_object_dialog.py\n"
+                    "• core/multi_object_ptz_system.py\n"
+                    "• core/ptz_tracking_integration_enhanced.py"
+                )
+            
+        except ImportError as e:
+            self.append_debug(f"❌ Sistema multi-objeto no disponible: {e}")
+            QMessageBox.warning(
+                self,
+                "Sistema No Disponible",
+                f"❌ Sistema PTZ multi-objeto no disponible:\n{e}\n\n"
+                f"Archivos requeridos:\n"
+                f"• ui/enhanced_ptz_multi_object_dialog.py\n"
+                f"• core/multi_object_ptz_system.py\n"
+                f"• core/ptz_tracking_integration_enhanced.py\n\n"
+                f"Dependencias:\n"
+                f"• pip install onvif-zeep numpy"
+            )
+        except Exception as e:
+            self.append_debug(f"❌ Error inesperado abriendo PTZ multi-objeto: {e}")
+            QMessageBox.critical(
+                self,
+                "Error Inesperado", 
+                f"❌ Error inesperado:\n{e}\n\n"
+                f"Revise la consola para más detalles."
+            )
+
+    # ✅ NUEVO: Integración con sistema de detección
+    def process_detections_for_ptz(self, results, frame_shape, camera_id=None):
+        """
+        Procesar detecciones para PTZ multi-objeto
+        
+        Args:
+            results: Resultados de YOLO/detección
+            frame_shape: Forma del frame (H, W, C)
+            camera_id: ID de la cámara (opcional)
+        """
+        # Solo procesar si el sistema PTZ multi-objeto está activo
+        if not self.ptz_detection_bridge:
+            return 0
+        
+        try:
+            # Procesar resultados de YOLO
+            detections_count = self.ptz_detection_bridge.process_yolo_results(
+                results, frame_shape
+            )
+            
+            if detections_count > 0:
+                self.append_debug(f"🎯 PTZ: {detections_count} detección(es) enviada(s) al sistema PTZ")
+            
+            return detections_count
+            
+        except Exception as e:
+            self.append_debug(f"⚠️ Error enviando detecciones al PTZ: {e}")
+            return 0
+
+    def send_custom_detections_to_ptz(self, detections_list):
+        """
+        Enviar detecciones personalizadas al PTZ
+        
+        Args:
+            detections_list: Lista de detecciones en formato personalizado
+        """
+        if not self.ptz_detection_bridge:
+            return
+        
+        try:
+            self.ptz_detection_bridge.process_custom_detections(detections_list)
+            self.append_debug(f"🎯 PTZ: {len(detections_list)} detección(es) personalizada(s) enviada(s)")
+        except Exception as e:
+            self.append_debug(f"⚠️ Error enviando detecciones personalizadas al PTZ: {e}")
 
     def add_adaptive_sampling_menu_items(self):
         """Agrega elementos del menú de muestreo adaptativo"""
@@ -231,30 +390,27 @@ class MainGUI(QMainWindow):
             )
 
     def apply_adaptive_config_to_all_cameras(self, config):
-        """Aplica configuración de muestreo adaptativo a todas las cámaras"""
+        """Aplica configuración de muestreo adaptativo a todas las cámaras - MÉTODO CORREGIDO"""
         applied_count = 0
-        
+
         for widget in self.camera_widgets:
             if hasattr(widget, 'configure_adaptive_sampling'):
                 try:
                     success = widget.configure_adaptive_sampling(config)
                     if success:
                         applied_count += 1
-                        
+
                         # También activar el muestreo adaptativo si no estaba activo
                         if hasattr(widget, 'toggle_adaptive_sampling'):
                             widget.toggle_adaptive_sampling(True)
-                            
                 except Exception as e:
                     cam_ip = "N/A"
                     if hasattr(widget, 'cam_data') and widget.cam_data:
                         cam_ip = widget.cam_data.get('ip', 'N/A')
                     self.append_debug(f"❌ Error aplicando config adaptativo a {cam_ip}: {e}")
-        
+
         if applied_count > 0:
             self.append_debug(f"✅ Configuración adaptativa aplicada a {applied_count} cámaras")
-            
-            # Guardar configuración en el archivo global
             self.save_adaptive_config_to_global_config(config)
         else:
             self.append_debug("⚠️ No se pudo aplicar configuración adaptativa a ninguna cámara")
@@ -849,15 +1005,6 @@ el rendimiento basado en la actividad de la escena."""
         except Exception as e:
             self.append_debug(f"❌ Error deteniendo PTZ: {e}")
 
-    def abrir_configuracion_modal(self):
-        """Abrir modal de configuración"""
-        dialog = ConfiguracionDialog(self, camera_list=self.camera_data_list)
-        if dialog.exec():
-            guardar_camaras(self)
-            self.append_debug(f"⚙️ Configuración del sistema guardada.")
-        else:
-            self.append_debug(f"⚙️ Cambios en configuración del sistema cancelados.")
-
     def toggle_line_edit(self):
         """Activar/desactivar modo de edición de línea de cruce"""
         items = self.camera_list.selectedItems()
@@ -1066,7 +1213,6 @@ el rendimiento basado en la actividad de la escena."""
         for cam in self.camera_data_list:
             self.start_camera_stream(cam)
             
-        self.append_debug("✅ Cámaras reiniciadas con nueva configuración")
 
     def closeEvent(self, event):
         """Manejar cierre de aplicación con limpieza completa"""
