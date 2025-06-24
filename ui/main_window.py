@@ -171,11 +171,27 @@ class MainGUI(QMainWindow):
     def open_ptz_multi_object_dialog(self):
         """Abrir sistema PTZ multi-objeto CORREGIDO"""
         try:
-            from ui.enhanced_ptz_multi_object_dialog import create_multi_object_ptz_system
-            
+            # ✅ CORRECCIÓN: Importar con manejo de errores mejorado
+            try:
+                from ui.enhanced_ptz_multi_object_dialog import create_multi_object_ptz_system
+            except ImportError as e:
+                self.append_debug(f"❌ Error importando sistema PTZ multi-objeto: {e}")
+                QMessageBox.critical(
+                    self,
+                    "Módulo No Disponible",
+                    f"❌ No se pudo cargar el sistema PTZ multi-objeto:\n{e}\n\n"
+                    f"Archivos requeridos:\n"
+                    f"• ui/enhanced_ptz_multi_object_dialog.py\n"
+                    f"• core/multi_object_ptz_system.py\n"
+                    f"• core/ptz_tracking_integration_enhanced.py\n\n"
+                    f"Dependencias:\n"
+                    f"• pip install onvif-zeep numpy"
+                )
+                return
+
             # Verificar que hay cámaras PTZ disponibles
             ptz_cameras = [cam for cam in self.camera_data_list if cam.get('tipo') == 'ptz']
-            
+
             if not ptz_cameras:
                 QMessageBox.warning(
                     self,
@@ -183,56 +199,100 @@ class MainGUI(QMainWindow):
                     "❌ No se encontraron cámaras PTZ configuradas.\n\n"
                     "Para usar el seguimiento multi-objeto:\n"
                     "1. Agregue al menos una cámara con tipo 'ptz'\n"
-                    "2. Asegúrese de que las credenciales sean correctas"
+                    "2. Configure las credenciales ONVIF\n"
+                    "3. Verifique la conectividad de red\n\n"
+                    "Use el menú 'Configuración → Cámaras' para agregar cámaras PTZ."
                 )
-                self.append_debug("⚠️ No hay cámaras PTZ para seguimiento multi-objeto")
                 return
-            
-            # Crear sistema PTZ multi-objeto
-            dialog, bridge = create_multi_object_ptz_system(self.camera_data_list, self)
-            
-            if dialog and bridge:
-                # Guardar referencia al bridge para uso externo
-                self.ptz_detection_bridge = bridge
-                
-                # Mostrar diálogo
-                dialog.show()
-                
-                self.append_debug("🎯 Sistema PTZ Multi-Objeto iniciado exitosamente")
-                self.append_debug(f"📹 {len(ptz_cameras)} cámaras PTZ disponibles para seguimiento")
-                
-                # Mostrar información sobre integración
-                QMessageBox.information(
-                    self,
-                    "PTZ Multi-Objeto Iniciado",
-                    "✅ Sistema PTZ Multi-Objeto iniciado exitosamente.\n\n"
-                    "🎯 Funcionalidades disponibles:\n"
-                    "• Seguimiento de múltiples objetos con alternancia\n"
-                    "• Zoom automático inteligente\n"
-                    "• Configuración de prioridades\n"
-                    "• Análisis en tiempo real\n\n"
-                    "💡 Las detecciones se enviarán automáticamente al sistema PTZ\n"
-                    "cuando esté activo el seguimiento."
-                )
-                
-            else:
-                self.append_debug("❌ Error creando sistema PTZ multi-objeto")
+
+            self.append_debug(f"🎯 Abriendo sistema PTZ multi-objeto con {len(ptz_cameras)} cámaras...")
+
+            # ✅ CORRECCIÓN: Llamar función con manejo de errores
+            try:
+                result = create_multi_object_ptz_system(self.camera_data_list, parent=self)
+
+                if result is None or result == (None, None):
+                    self.append_debug("❌ No se pudo crear el sistema PTZ multi-objeto")
+                    QMessageBox.critical(
+                        self,
+                        "Error de Inicialización",
+                        "❌ No se pudo inicializar el sistema PTZ multi-objeto.\n\n"
+                        "Posibles causas:\n"
+                        "• Módulos requeridos no disponibles\n"
+                        "• Error en configuración de cámaras\n"
+                        "• Problemas de conectividad\n\n"
+                        "Revise la consola de debug para más detalles."
+                    )
+                    return
+
+                # Desempaquetar resultado
+                if isinstance(result, tuple) and len(result) == 2:
+                    dialog, bridge = result
+                else:
+                    dialog = result
+                    bridge = None
+
+                if dialog:
+                    self.append_debug("✅ Sistema PTZ multi-objeto creado exitosamente")
+
+                    # Almacenar referencia al puente si existe
+                    if bridge:
+                        self.ptz_detection_bridge = bridge
+                        self.append_debug("🌉 Puente PTZ registrado para integración con detecciones")
+
+                    # Mostrar diálogo
+                    dialog.show()
+
+                    # Opcional: Conectar señales si están disponibles
+                    if hasattr(dialog, 'tracking_started'):
+                        dialog.tracking_started.connect(
+                            lambda: self.append_debug("🎯 Seguimiento PTZ multi-objeto iniciado")
+                        )
+
+                    if hasattr(dialog, 'tracking_stopped'):
+                        dialog.tracking_stopped.connect(
+                            lambda: self.append_debug("⏹️ Seguimiento PTZ multi-objeto detenido")
+                        )
+
+                    if hasattr(dialog, 'object_detected'):
+                        dialog.object_detected.connect(
+                            lambda obj_id, obj_data: self.append_debug(f"🔍 Objeto {obj_id} detectado en PTZ")
+                        )
+
+                    self.append_debug("🚀 Sistema PTZ multi-objeto listo para usar")
+
+                    QMessageBox.information(
+                        self,
+                        "PTZ Multi-Objeto Iniciado",
+                        f"✅ Sistema PTZ Multi-Objeto iniciado exitosamente.\n\n"
+                        f"🎯 Funcionalidades disponibles:\n"
+                        f"• Seguimiento de múltiples objetos con alternancia\n"
+                        f"• Zoom automático inteligente\n"
+                        f"• Configuración de prioridades\n"
+                        f"• Análisis en tiempo real\n\n"
+                        f"📹 {len(ptz_cameras)} cámaras PTZ registradas\n\n"
+                        f"💡 Las detecciones se enviarán automáticamente al sistema PTZ\n"
+                        f"cuando esté activo el seguimiento."
+                    )
+                else:
+                    self.append_debug("❌ Error: Diálogo PTZ multi-objeto es None")
+
+            except Exception as creation_error:
+                self.append_debug(f"❌ Error crítico creando sistema PTZ: {creation_error}")
                 QMessageBox.critical(
                     self,
-                    "Error",
-                    "❌ No se pudo crear el sistema PTZ multi-objeto.\n\n"
-                    "Verifique que los archivos estén presentes:\n"
-                    "• ui/enhanced_ptz_multi_object_dialog.py\n"
-                    "• core/multi_object_ptz_system.py\n"
-                    "• core/ptz_tracking_integration_enhanced.py"
+                    "Error Crítico",
+                    f"❌ Error crítico al crear el sistema PTZ:\n{creation_error}\n\n"
+                    f"El sistema no pudo inicializarse correctamente.\n"
+                    f"Revise la configuración y las dependencias."
                 )
-            
-        except ImportError as e:
-            self.append_debug(f"❌ Sistema multi-objeto no disponible: {e}")
+
+        except ImportError as import_error:
+            self.append_debug(f"❌ Error de importación PTZ multi-objeto: {import_error}")
             QMessageBox.warning(
                 self,
                 "Sistema No Disponible",
-                f"❌ Sistema PTZ multi-objeto no disponible:\n{e}\n\n"
+                f"❌ Sistema PTZ multi-objeto no disponible:\n{import_error}\n\n"
                 f"Archivos requeridos:\n"
                 f"• ui/enhanced_ptz_multi_object_dialog.py\n"
                 f"• core/multi_object_ptz_system.py\n"
@@ -240,59 +300,179 @@ class MainGUI(QMainWindow):
                 f"Dependencias:\n"
                 f"• pip install onvif-zeep numpy"
             )
-        except Exception as e:
-            self.append_debug(f"❌ Error inesperado abriendo PTZ multi-objeto: {e}")
+
+        except Exception as general_error:
+            self.append_debug(f"❌ Error inesperado abriendo PTZ multi-objeto: {general_error}")
             QMessageBox.critical(
                 self,
-                "Error Inesperado", 
-                f"❌ Error inesperado:\n{e}\n\n"
-                f"Revise la consola para más detalles."
+                "Error Inesperado",
+                f"❌ Error inesperado:\n{general_error}\n\n"
+                f"Revise la consola para más detalles.\n"
+                f"Si el problema persiste, reinicie la aplicación."
             )
 
     # ✅ NUEVO: Integración con sistema de detección
-    def process_detections_for_ptz(self, results, frame_shape, camera_id=None):
-        """
-        Procesar detecciones para PTZ multi-objeto
-        
-        Args:
-            results: Resultados de YOLO/detección
-            frame_shape: Forma del frame (H, W, C)
-            camera_id: ID de la cámara (opcional)
-        """
-        # Solo procesar si el sistema PTZ multi-objeto está activo
-        if not self.ptz_detection_bridge:
-            return 0
-        
-        try:
-            # Procesar resultados de YOLO
-            detections_count = self.ptz_detection_bridge.process_yolo_results(
-                results, frame_shape
-            )
-            
-            if detections_count > 0:
-                self.append_debug(f"🎯 PTZ: {detections_count} detección(es) enviada(s) al sistema PTZ")
-            
-            return detections_count
-            
-        except Exception as e:
-            self.append_debug(f"⚠️ Error enviando detecciones al PTZ: {e}")
-            return 0
-
     def send_custom_detections_to_ptz(self, detections_list):
         """
         Enviar detecciones personalizadas al PTZ
-        
+
         Args:
             detections_list: Lista de detecciones en formato personalizado
         """
         if not self.ptz_detection_bridge:
             return
-        
+
         try:
             self.ptz_detection_bridge.process_custom_detections(detections_list)
             self.append_debug(f"🎯 PTZ: {len(detections_list)} detección(es) personalizada(s) enviada(s)")
         except Exception as e:
             self.append_debug(f"⚠️ Error enviando detecciones personalizadas al PTZ: {e}")
+
+    def cleanup_ptz_system(self):
+        """Limpiar sistema PTZ al cerrar la aplicación"""
+        try:
+            if hasattr(self, 'ptz_detection_bridge') and self.ptz_detection_bridge:
+                self.ptz_detection_bridge.cleanup()
+                self.ptz_detection_bridge = None
+                self.append_debug("🧹 Sistema PTZ limpiado")
+        except Exception as e:
+            self.append_debug(f"❌ Error limpiando sistema PTZ: {e}")
+
+    def send_detections_to_ptz(self, camera_id: str, detections):
+        """Enviar detecciones al sistema PTZ si está activo"""
+        try:
+            if hasattr(self, 'ptz_detection_bridge') and self.ptz_detection_bridge:
+                success = self.ptz_detection_bridge.send_detections(camera_id, detections)
+                if success:
+                    self.append_debug(f"📡 Detecciones enviadas a PTZ para cámara {camera_id}")
+                return success
+            return False
+        except Exception as e:
+            self.append_debug(f"❌ Error enviando detecciones a PTZ: {e}")
+            return False
+
+    def get_ptz_status(self, camera_id: str = None):
+        """Obtener estado del sistema PTZ"""
+        try:
+            if hasattr(self, 'ptz_detection_bridge') and self.ptz_detection_bridge:
+                return self.ptz_detection_bridge.get_status(camera_id)
+            return {'error': 'Sistema PTZ no activo'}
+        except Exception as e:
+            return {'error': str(e)}
+
+    def get_ptz_bridge_status(self):
+        """Verificar estado del puente PTZ (para debugging)"""
+        try:
+            if hasattr(self, 'ptz_detection_bridge') and self.ptz_detection_bridge:
+                status = {
+                    'active': True,
+                    'cameras_registered': len(self.ptz_detection_bridge.active_cameras),
+                    'detection_count': self.ptz_detection_bridge.detection_count,
+                    'active_cameras': list(self.ptz_detection_bridge.active_cameras.keys())
+                }
+                return status
+            else:
+                return {
+                    'active': False,
+                    'error': 'Puente PTZ no inicializado'
+                }
+        except Exception as e:
+            return {
+                'active': False,
+                'error': str(e)
+            }
+
+    def process_detections_for_ptz(self, results, frame_shape, camera_id=None):
+        """Procesar detecciones para PTZ multi-objeto (Formato YOLO completo)"""
+        if not hasattr(self, 'ptz_detection_bridge') or not self.ptz_detection_bridge:
+            return 0
+
+        try:
+            if hasattr(self.ptz_detection_bridge, 'process_yolo_results'):
+                detections_count = self.ptz_detection_bridge.process_yolo_results(
+                    results, frame_shape
+                )
+            else:
+                detections_count = self._convert_and_send_detections(results, camera_id)
+
+            if detections_count > 0:
+                self.append_debug(
+                    f"🎯 PTZ: {detections_count} detección(es) enviada(s) al sistema PTZ"
+                )
+
+            return detections_count
+
+        except Exception as e:
+            self.append_debug(f"⚠️ Error enviando detecciones al PTZ: {e}")
+            return 0
+
+    def _convert_and_send_detections(self, results, camera_id):
+        """Convertir detecciones YOLO a formato básico y enviar al PTZ"""
+        try:
+            if not results or not hasattr(results, 'boxes'):
+                return 0
+
+            detections_list = []
+            boxes = results.boxes
+
+            if boxes is not None and len(boxes) > 0:
+                for i, box in enumerate(boxes):
+                    xyxy = box.xyxy[0].cpu().numpy()
+                    conf = float(box.conf[0].cpu().numpy())
+                    cls = int(box.cls[0].cpu().numpy())
+
+                    x1, y1, x2, y2 = xyxy
+                    cx = float((x1 + x2) / 2)
+                    cy = float((y1 + y2) / 2)
+                    width = float(x2 - x1)
+                    height = float(y2 - y1)
+
+                    detection = {
+                        'cx': cx,
+                        'cy': cy,
+                        'width': width,
+                        'height': height,
+                        'confidence': conf,
+                        'class': cls,
+                        'bbox': [float(x1), float(y1), float(x2), float(y2)],
+                        'frame_w': results.orig_shape[1] if hasattr(results, 'orig_shape') else 1920,
+                        'frame_h': results.orig_shape[0] if hasattr(results, 'orig_shape') else 1080
+                    }
+                    detections_list.append(detection)
+
+            if detections_list and camera_id:
+                success = self.send_detections_to_ptz(camera_id, detections_list)
+                return len(detections_list) if success else 0
+
+            return 0
+
+        except Exception as e:
+            self.append_debug(f"❌ Error convirtiendo detecciones para PTZ: {e}")
+            return 0
+
+    def register_camera_with_ptz(self, camera_data):
+        """Registrar una cámara con el sistema PTZ"""
+        try:
+            if hasattr(self, 'ptz_detection_bridge') and self.ptz_detection_bridge:
+                camera_id = camera_data.get('ip', camera_data.get('id', 'unknown'))
+
+                if camera_data.get('tipo') == 'ptz':
+                    success = self.ptz_detection_bridge.register_camera(camera_id, camera_data)
+                    if success:
+                        self.append_debug(f"📷 Cámara PTZ registrada: {camera_id}")
+                        return True
+                    else:
+                        self.append_debug(f"❌ Error registrando cámara PTZ: {camera_id}")
+                else:
+                    self.append_debug(
+                        f"📹 Cámara fija preparada para envío de detecciones: {camera_id}"
+                    )
+                    return True
+
+            return False
+        except Exception as e:
+            self.append_debug(f"❌ Error registrando cámara con PTZ: {e}")
+            return False
 
     def add_adaptive_sampling_menu_items(self):
         """Agrega elementos del menú de muestreo adaptativo"""
@@ -1225,6 +1405,9 @@ el rendimiento basado en la actividad de la escena."""
                 print("INFO: Sistema PTZ detenido")
         except Exception as e:
             print(f"ERROR deteniendo sistema PTZ: {e}")
+
+        # ✅ AGREGAR: Limpiar sistema PTZ
+        self.cleanup_ptz_system()
         
         # Detener widgets de cámara
         print(f"INFO: Deteniendo {len(self.camera_widgets)} widgets de cámara activos...")
