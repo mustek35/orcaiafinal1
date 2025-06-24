@@ -52,8 +52,6 @@ class MainGUI(QMainWindow):
         
         # NUEVO: Bridge PTZ para detecciones
         self.ptz_detection_bridge = None
-        # ✅ CORRECCIÓN: Inicializar variable para puente PTZ
-        self.ptz_bridge = None  # Para almacenar referencia al puente PTZ
 
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
@@ -239,7 +237,7 @@ class MainGUI(QMainWindow):
 
                     # Almacenar referencia al puente si existe
                     if bridge:
-                        self.ptz_bridge = bridge
+                        self.ptz_detection_bridge = bridge
                         self.append_debug("🌉 Puente PTZ registrado para integración con detecciones")
 
                     # Mostrar diálogo
@@ -262,6 +260,20 @@ class MainGUI(QMainWindow):
                         )
 
                     self.append_debug("🚀 Sistema PTZ multi-objeto listo para usar")
+
+                    QMessageBox.information(
+                        self,
+                        "PTZ Multi-Objeto Iniciado",
+                        f"✅ Sistema PTZ Multi-Objeto iniciado exitosamente.\n\n"
+                        f"🎯 Funcionalidades disponibles:\n"
+                        f"• Seguimiento de múltiples objetos con alternancia\n"
+                        f"• Zoom automático inteligente\n"
+                        f"• Configuración de prioridades\n"
+                        f"• Análisis en tiempo real\n\n"
+                        f"📹 {len(ptz_cameras)} cámaras PTZ registradas\n\n"
+                        f"💡 Las detecciones se enviarán automáticamente al sistema PTZ\n"
+                        f"cuando esté activo el seguimiento."
+                    )
                 else:
                     self.append_debug("❌ Error: Diálogo PTZ multi-objeto es None")
 
@@ -347,8 +359,8 @@ class MainGUI(QMainWindow):
     def send_detections_to_ptz(self, camera_id: str, detections):
         """Enviar detecciones al sistema PTZ si está activo"""
         try:
-            if hasattr(self, 'ptz_bridge') and self.ptz_bridge:
-                success = self.ptz_bridge.send_detections(camera_id, detections)
+            if hasattr(self, 'ptz_detection_bridge') and self.ptz_detection_bridge:
+                success = self.ptz_detection_bridge.send_detections(camera_id, detections)
                 if success:
                     self.append_debug(f"📡 Detecciones enviadas a PTZ para cámara {camera_id}")
                 return success
@@ -360,8 +372,8 @@ class MainGUI(QMainWindow):
     def get_ptz_status(self, camera_id: str = None):
         """Obtener estado del sistema PTZ"""
         try:
-            if hasattr(self, 'ptz_bridge') and self.ptz_bridge:
-                return self.ptz_bridge.get_status(camera_id)
+            if hasattr(self, 'ptz_detection_bridge') and self.ptz_detection_bridge:
+                return self.ptz_detection_bridge.get_status(camera_id)
             return {'error': 'Sistema PTZ no activo'}
         except Exception as e:
             return {'error': str(e)}
@@ -369,9 +381,9 @@ class MainGUI(QMainWindow):
     def cleanup_ptz_system(self):
         """Limpiar sistema PTZ al cerrar la aplicación"""
         try:
-            if hasattr(self, 'ptz_bridge') and self.ptz_bridge:
-                self.ptz_bridge.cleanup()
-                self.ptz_bridge = None
+            if hasattr(self, 'ptz_detection_bridge') and self.ptz_detection_bridge:
+                self.ptz_detection_bridge.cleanup()
+                self.ptz_detection_bridge = None
                 self.append_debug("🧹 Sistema PTZ limpiado")
         except Exception as e:
             self.append_debug(f"❌ Error limpiando sistema PTZ: {e}")
